@@ -8619,7 +8619,12 @@ class MainWindow(MSFluentWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(tr("app_title") + f"  v{CURRENT_VERSION}")
-        self.resize(1680, 1050)
+        self.resize(1680, 1150)
+
+        # 窗口启动时居中显示
+        from PyQt6.QtGui import QGuiApplication, QScreen
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._center_window())
 
         # 设置窗口图标为Fluent内置的下载图标
         self.setWindowIcon(FluentIcon.CLOUD_DOWNLOAD.icon())
@@ -8717,7 +8722,22 @@ class MainWindow(MSFluentWindow):
 
         # 延迟自动检查更新（可在设置中关闭）
         QTimer.singleShot(3000, self._auto_check_update)
-    
+
+    def _center_window(self):
+        """窗口居中显示（主屏）"""
+        try:
+            from PyQt6.QtGui import QGuiApplication
+            screen = QGuiApplication.primaryScreen()
+            if screen is None:
+                return
+            geo = screen.availableGeometry()
+            self.move(
+                geo.x() + (geo.width() - self.width()) // 2,
+                geo.y() + (geo.height() - self.height()) // 2
+            )
+        except Exception:
+            pass
+
     def switch_to_default_page(self):
         """切换到默认界面"""
         try:
