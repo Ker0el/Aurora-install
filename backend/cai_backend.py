@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.2"  # 当前版本号
+CURRENT_VERSION = "1.3"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -39,6 +39,34 @@ CAIGAMES_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json"
 }
+
+# --- 本地内置热门游戏索引（在线源失败时的离线兜底）---
+_HOT_GAME_INDEX = [
+    {"appid": "2358720", "name": "黑神话：悟空", "name_en": "Black Myth: Wukong"},
+    {"appid": "730", "name": "反恐精英2", "name_en": "Counter-Strike 2"},
+    {"appid": "570", "name": "DOTA 2", "name_en": "DOTA 2"},
+    {"appid": "271590", "name": "侠盗猎车手5", "name_en": "Grand Theft Auto V"},
+    {"appid": "271590", "name": "GTA5", "name_en": "Grand Theft Auto V"},
+    {"appid": "1623730", "name": "幻兽帕鲁", "name_en": "Palworld"},
+    {"appid": "1091500", "name": "赛博朋克2077", "name_en": "Cyberpunk 2077"},
+    {"appid": "1245620", "name": "艾尔登法环", "name_en": "Elden Ring"},
+    {"appid": "1085660", "name": "毁灭战士：永恒", "name_en": "DOOM Eternal"},
+    {"appid": "105600", "name": "泰拉瑞亚", "name_en": "Terraria"},
+    {"appid": "252490", "name": "Rust", "name_en": "Rust"},
+    {"appid": "394360", "name": "文明6", "name_en": "Sid Meier's Civilization VI"},
+    {"appid": "289070", "name": "十字军之王3", "name_en": "Crusader Kings III"},
+    {"appid": "1172470", "name": "Apex 英雄", "name_en": "Apex Legends"},
+    {"appid": "440", "name": "军团要塞2", "name_en": "Team Fortress 2"},
+    {"appid": "22380", "name": "求生之路2", "name_en": "Left 4 Dead 2"},
+    {"appid": "377160", "name": "天命2", "name_en": "Destiny 2"},
+    {"appid": "218620", "name": "求生之路", "name_en": "Left 4 Dead"},
+    {"appid": "322330", "name": "消逝的光芒", "name_en": "Dying Light"},
+    {"appid": "431960", "name": "Wallpaper Engine", "name_en": "Wallpaper Engine"},
+    {"appid": "386360", "name": "NBA 2K25", "name_en": "NBA 2K25"},
+    {"appid": "1086940", "name": "博德之门3", "name_en": "Baldur's Gate 3"},
+    {"appid": "268500", "name": "XCOM 2", "name_en": "XCOM 2"},
+    {"appid": "227300", "name": "欧洲卡车模拟2", "name_en": "Euro Truck Simulator 2"},
+]
 
 # --- MODIFIED: Added Custom_Repos setting ---
 DEFAULT_CONFIG = {
@@ -591,6 +619,24 @@ class CaiBackend:
                         return game_name
         except Exception as e:
             self.log.debug(f"steamCMD API 获取 AppID {appid} 名称失败，尝试官方API: {e}")
+
+        # 备用：SteamCMD API (api.steamcmd.net，实测可用)
+        try:
+            r = await self.client.get(
+                f"https://api.steamcmd.net/v1/info/{appid}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                timeout=15
+            )
+            if r.status_code == 200:
+                info_root = r.json().get("data", {})
+                info = info_root.get(str(appid), info_root)
+                game_name = info.get("common", {}).get("name", "")
+                if game_name:
+                    self.name_cache[cache_key] = game_name
+                    _save_global_name_cache()
+                    return game_name
+        except Exception as e:
+            self.log.debug(f"SteamCMD API 获取 AppID {appid} 名称失败: {e}")
 
         # 备用：Steam官方API
         try:
@@ -3444,6 +3490,21 @@ class CaiBackend:
         except Exception as e:
             self.log.warning(f"CaiGames API 搜索失败，切换到 Steam 搜索: {e}")
 
+        # 备用：本地内置热门游戏索引（离线兜底）
+        term_lower = game_name.strip().lower()
+        if term_lower:
+            local_results = []
+            for entry in _HOT_GAME_INDEX:
+                if term_lower in entry["name"].lower() or term_lower in entry["name_en"].lower():
+                    local_results.append({
+                        'appid': entry["appid"],
+                        'name': entry["name"],
+                        'header_image': f"https://cdn.cloudflare.steamstatic.com/steam/apps/{entry['appid']}/header.jpg"
+                    })
+            if local_results:
+                self.log.info(f"本地索引命中 {len(local_results)} 个结果")
+                return local_results
+
         # 备用：Steam 商店搜索
         try:
             import urllib.parse, re
@@ -3475,7 +3536,7 @@ class CaiBackend:
                 return games_list
             self.log.warning("未找到相关游戏。")
         except Exception as e:
-            self.log.error(f"搜索游戏 '{game_name}' 失败: {self.stack_error(e)}")
+            self.log.warning(f"Steam 官方搜索失败: {e}")
 
         return []
 

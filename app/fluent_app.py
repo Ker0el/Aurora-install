@@ -53,6 +53,30 @@ _rec_cache: list = []
 _rec_cache_ts: float = 0.0
 _REC_CACHE_TTL = 3600  # 缓存有效期 1 小时
 
+# 内置热门游戏兜底列表（推荐接口不可用时使用）
+_HOT_GAMES = [
+    {"appid": "2358720", "name": "黑神话：悟空"},
+    {"appid": "730", "name": "反恐精英2"},
+    {"appid": "570", "name": "DOTA 2"},
+    {"appid": "271590", "name": "侠盗猎车手5"},
+    {"appid": "1623730", "name": "幻兽帕鲁"},
+    {"appid": "1091500", "name": "赛博朋克2077"},
+    {"appid": "1245620", "name": "艾尔登法环"},
+    {"appid": "1086940", "name": "博德之门3"},
+    {"appid": "1085660", "name": "毁灭战士：永恒"},
+    {"appid": "105600", "name": "泰拉瑞亚"},
+    {"appid": "252490", "name": "Rust"},
+    {"appid": "394360", "name": "文明6"},
+    {"appid": "1172470", "name": "Apex 英雄"},
+    {"appid": "440", "name": "军团要塞2"},
+    {"appid": "22380", "name": "求生之路2"},
+    {"appid": "377160", "name": "天命2"},
+    {"appid": "431960", "name": "Wallpaper Engine"},
+    {"appid": "386360", "name": "NBA 2K25"},
+    {"appid": "268500", "name": "XCOM 2"},
+    {"appid": "227300", "name": "欧洲卡车模拟2"},
+]
+
 
 # 语言配置
 LANGUAGES = {
@@ -158,6 +182,8 @@ TEXTS = {
         "default_page_home": "主页",
         "default_page_search": "搜索入库",
         "restart_steam": "重启 Steam",
+        "hot_recommendations": "热门推荐",
+        "sponsor_nav": "赞助",
         "installed_games": "已入库的游戏",
         "search_placeholder": "搜索游戏名称或 AppID",
         "loading": "加载中...",
@@ -337,6 +363,8 @@ TEXTS = {
         "default_page_home": "Home",
         "default_page_search": "Search Library",
         "restart_steam": "Restart Steam",
+        "hot_recommendations": "Hot Games",
+        "sponsor_nav": "Sponsor",
         "installed_games": "Installed Games",
         "search_placeholder": "Search game name or AppID",
         "loading": "Loading...",
@@ -501,6 +529,8 @@ TEXTS = {
         "default_page_home": "Accueil",
         "default_page_search": "Recherche",
         "restart_steam": "Redémarrer Steam",
+        "hot_recommendations": "Jeux populaires",
+        "sponsor_nav": "Soutenir",
         "installed_games": "Jeux installés",
         "search_placeholder": "Rechercher un nom de jeu ou AppID",
         "loading": "Chargement...",
@@ -677,6 +707,8 @@ TEXTS = {
         "default_page_home": "Главная",
         "default_page_search": "Поиск",
         "restart_steam": "Перезапустить Steam",
+        "hot_recommendations": "Популярные игры",
+        "sponsor_nav": "Поддержать",
         "installed_games": "Установленные игры",
         "search_placeholder": "Поиск названия игры или AppID",
         "loading": "Загрузка...",
@@ -853,6 +885,8 @@ TEXTS = {
         "default_page_home": "Startseite",
         "default_page_search": "Suche",
         "restart_steam": "Steam neu starten",
+        "hot_recommendations": "Beliebte Spiele",
+        "sponsor_nav": "Unterstützen",
         "installed_games": "Installierte Spiele",
         "search_placeholder": "Spielname oder AppID suchen",
         "loading": "Laden...",
@@ -1029,6 +1063,8 @@ TEXTS = {
         "default_page_home": "ホーム",
         "default_page_search": "ライブラリ検索",
         "restart_steam": "Steamを再起動",
+        "hot_recommendations": "人気ゲーム",
+        "sponsor_nav": "スポンサー",
         "installed_games": "インストール済みゲーム",
         "search_placeholder": "ゲーム名またはAppIDを検索",
         "loading": "読み込み中...",
@@ -1208,6 +1244,8 @@ TEXTS = {
         "default_page_home": "主頁",
         "default_page_search": "搜尋入库",
         "restart_steam": "重新啟動 Steam",
+        "hot_recommendations": "熱門推薦",
+        "sponsor_nav": "贊助",
         "installed_games": "已入库的遊戲",
         "search_placeholder": "搜尋遊戲名稱或 AppID",
         "loading": "載入中...",
@@ -4941,8 +4979,13 @@ class SearchPage(ScrollArea):
         global _rec_cache, _rec_cache_ts
         self._rec_worker = None
         if not games:
+            # 接口失败时兜底使用内置热门列表
+            self._rec_games = _HOT_GAMES
+            self._rec_shown = 0
             if hasattr(self, '_rec_label') and self._rec_label:
-                self._rec_label.setText(tr("recommendations_failed"))
+                self._rec_label.setText(tr("hot_recommendations"))
+            if not self.search_results:
+                self._render_recommendations()
             return
         if hasattr(self, '_rec_label') and self._rec_label:
             self._rec_label.setText(tr("recommended_hint"))
@@ -6522,7 +6565,7 @@ class TrainerPage(ScrollArea):
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _check_db(self):
-        self._log("修改器功能已就绪，首次搜索会从 FLiNG 官网拉取列表（约 3-5 秒），之后 24h 内走本地缓存")
+        self._log("修改器功能已就绪，首次搜索会从风灵月影官网拉取列表（约 3-5 秒），之后 24h 内走本地缓存")
 
     def _load_installed(self):
         from backend.trainer_backend import list_installed_trainers
@@ -8273,7 +8316,17 @@ class MainWindow(MSFluentWindow):
             selectable=False,
             position=NavigationItemPosition.BOTTOM
         )
-        
+
+        # 在导航栏底部添加赞助入口
+        self.navigationInterface.addItem(
+            routeKey="sponsor",
+            icon=FluentIcon.HEART,
+            text=tr("sponsor_nav"),
+            onClick=self._show_sponsor,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM
+        )
+
         # 设置窗口效果
         # navigationInterface 在 MSFluentWindow 中已经配置好了
         # 不需要手动设置宽度
@@ -8377,6 +8430,10 @@ class MainWindow(MSFluentWindow):
         self._auto_update_worker.finished.connect(self._auto_update_worker.deleteLater)
         self._auto_update_worker.start()
     
+    def _show_sponsor(self):
+        """打开赞助页面"""
+        self.settings_page.show_donate()
+
     def on_restart_steam(self):
         """重启 Steam"""
         dialog = MessageBox(
