@@ -351,7 +351,7 @@ def _fetch_archive_list() -> list:
         url = urljoin(_ARCHIVE_URL, href) if href else ''
         results.append({
             "game_name":    game_name,
-            "trainer_name": f"[FLiNG] {game_name} Trainer",
+            "trainer_name": f"[风灵月影] {game_name} Trainer",
             "url":          url,
             "source":       "archive",
             "version":      "",
@@ -385,7 +385,7 @@ def _fetch_main_list() -> list:
                 url = a.get('href', '')
                 results.append({
                     "game_name":    game_name,
-                    "trainer_name": f"[FLiNG] {game_name} Trainer",
+                    "trainer_name": f"[风灵月影] {game_name} Trainer",
                     "url":          url,
                     "source":       "main",
                     "version":      "",

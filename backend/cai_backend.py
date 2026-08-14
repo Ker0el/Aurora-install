@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.1"  # 当前版本号
+CURRENT_VERSION = "1.2"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
     "ST_Fixed_Manifest_Mode": "ask",  # 固定版本manifest修复模式: always/never/ask
     "patch_manifest_default": False,    # 默认是否修补manifest
     "QA1": "温馨提示: Github_Personal_Token(个人访问令牌)可在Github设置的最底下开发者选项中找到, 详情请看教程。",
-    "QA2": "Force_Unlocker: 强制指定解锁工具, 填入 'steamtools' 或 'greenluma'。留空则自动检测。",
+    "QA2": "Force_Unlocker: 强制指定解锁工具, 填入 'steamtools'、'greenluma' 或 'opensteamtools'。留空则自动检测。",
     "QA3": "Custom_Repos: 自定义清单库配置。github数组用于添加GitHub仓库，zip数组用于添加ZIP清单库。",
     "QA4": "GitHub仓库格式: {\"name\": \"显示名称\", \"repo\": \"用户名/仓库名\"}",
     "QA5": "ZIP清单库格式: {\"name\": \"显示名称\", \"url\": \"下载URL，用{app_id}作为占位符\"}"
@@ -447,7 +447,7 @@ class CaiBackend:
             self.log.warning(f"网页重定向兜底失败: {e}")
             return False, {}
 
-    async def initialize(self) -> Literal["steamtools", "greenluma", "conflict", "none", None]:
+    async def initialize(self) -> Literal["steamtools", "greenluma", "opensteamtools", "conflict", "none", None]:
         if not self.config: self.config = await self.load_config()
         if self.config is None: return None
         self._configure_logger()
@@ -460,13 +460,18 @@ class CaiBackend:
 
         force_unlocker = self.config.get("force_unlocker_type", "auto")
 
-        if force_unlocker in ["steamtools", "greenluma"]:
+        if force_unlocker in ["steamtools", "greenluma", "opensteamtools"]:
             self.unlocker_type = force_unlocker
             self.log.warning(f"已根据配置强制使用解锁工具: {force_unlocker.capitalize()}")
         else:
+            is_opensteamtools = (self.steam_path / 'opensteamtool.toml').exists() or (self.steam_path / 'OpenSteamTool.dll').exists()
             is_steamtools = (self.steam_path / 'config' / 'stplug-in').is_dir()
             is_greenluma = any((self.steam_path / dll).exists() for dll in ['GreenLuma_2026_x86.dll', 'GreenLuma_2026_x64.dll'])
-            if is_steamtools and is_greenluma:
+            if is_opensteamtools:
+                # OpenSteamTools 可能残留空的 stplug-in 目录，需先于 SteamTools 判断
+                self.log.info("自动检测到解锁工具: OpenSteamTools")
+                self.unlocker_type = "opensteamtools"
+            elif is_steamtools and is_greenluma:
                 self.log.error("环境冲突：同时检测到SteamTools和GreenLuma！请在设置中强制指定一个。")
                 self.unlocker_type = "conflict"
             elif is_steamtools:
@@ -669,16 +674,35 @@ class CaiBackend:
         if not self.steam_path or not self.steam_path.exists():
             return {"error": "Steam路径未配置或无效。"}
 
-        file_data = {"st": [], "gl": [], "assistant": []}
+        file_data = {"st": [], "gl": [], "ost": [], "dc": [], "assistant": []}
 
         # 1. 扫描文件
         st_path = self.steam_path / 'config' / 'stplug-in'
         gl_path = self.steam_path / 'AppList'
+        ost_lua_path = self.steam_path / 'config' / 'lua'
+        dc_path = self.steam_path / 'depotcache'
 
-        if st_path.exists():
-            file_data['st'], _ = self._scan_st_files(st_path)
-        if gl_path.exists():
-            file_data['gl'], _ = self._scan_generic_files(gl_path, ".txt")
+        if self.unlocker_type != "opensteamtools":
+            if st_path.exists():
+                file_data['st'], _ = self._scan_st_files(st_path)
+            if gl_path.exists():
+                file_data['gl'], _ = self._scan_generic_files(gl_path, ".txt")
+
+        # OpenSteamTools: config/lua 明文解锁文件（格式与 stplug-in 相同，直接复用扫描）
+        if ost_lua_path.exists():
+            file_data['ost'], _ = self._scan_st_files(ost_lua_path)
+
+        # depotcache: *.manifest 补漏，与 lua 去重（appid 相同只保留 lua 条目）
+        if dc_path.exists():
+            ost_appids = {item['appid'] for item in file_data['ost'] if item.get('appid', 'N/A').isdigit()}
+            dc_list = []
+            for filename in sorted(os.listdir(dc_path)):
+                if not filename.endswith('.manifest'):
+                    continue
+                appid = filename.split('_', 1)[0]
+                if appid.isdigit() and appid not in ost_appids:
+                    dc_list.append({"filename": filename, "appid": appid, "game_name": "", "status": "ok", "mode": "auto"})
+            file_data['dc'] = dc_list
 
         # 2. 用缓存填充已知名称，未知的留空（前端显示 AppID 占位）
         for category in file_data:
@@ -770,6 +794,20 @@ class CaiBackend:
         
         data.extend(sorted(file_data_map.values(), key=lambda item: int(item.get('appid', 0)), reverse=True))
         return data, appids
+
+    def _mirror_lua_to_ost(self, lua_filepath: Path) -> None:
+        """OpenSteamTools 模式：将 stplug-in 的明文 lua 同步到 config/lua（追加兼容，不影响 SteamTools/GreenLuma 逻辑）"""
+        if self.unlocker_type != "opensteamtools":
+            return
+        try:
+            if not lua_filepath.exists():
+                return
+            ost_lua_dir = self.steam_path / 'config' / 'lua'
+            ost_lua_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(lua_filepath, ost_lua_dir / lua_filepath.name)
+            self.log.info(f"[OpenSteamTools] 已同步解锁文件到 config/lua: {lua_filepath.name}")
+        except Exception as e:
+            self.log.error(f"[OpenSteamTools] 同步解锁文件失败: {self.stack_error(e)}")
 
     def _scan_generic_files(self, directory: Path, extension: str) -> Tuple[List[Dict], set]:
         """扫描通用目录（如GreenLuma），返回文件数据和AppID集合。"""
@@ -1782,7 +1820,7 @@ class CaiBackend:
                     return False
 
                 # 保存文件到depotcache目录
-                if self.unlocker_type == "steamtools":
+                if self.unlocker_type in ("steamtools", "opensteamtools"):
                     st_depot_path = self.steam_path / 'config' / 'depotcache'
                     gl_depot_path = self.steam_path / 'depotcache'
                     st_depot_path.mkdir(parents=True, exist_ok=True)
@@ -1930,7 +1968,7 @@ class CaiBackend:
                 return False
 
             # 4. 根据解锁工具类型处理 (复用 ManifestHub V2 的逻辑)
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 # 将 sudama_keys 作为 depotkeys_data 传入，以便复用修补逻辑
                 return await self._process_steamautocracks_v2_for_steamtools(
                     app_id, valid_depots, depot_manifest_map, use_st_auto_update, add_all_dlc, patch_depot_key, sudama_keys
@@ -1988,7 +2026,7 @@ class CaiBackend:
             manifest_files = list(extract_path.rglob('*.manifest'))
             lua_files = list(extract_path.rglob('*.lua'))
 
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 stplug_path = self.steam_path / 'config' / 'stplug-in'
                 stplug_path.mkdir(parents=True, exist_ok=True)
                 all_depots = {}
@@ -2013,6 +2051,7 @@ class CaiBackend:
                     await self._add_free_dlcs_to_lua(app_id, lua_filepath)
                 if patch_depot_key:
                     await self.patch_lua_with_depotkey(app_id, lua_filepath)
+                    self._mirror_lua_to_ost(lua_filepath)
             else:
                 steam_depot_path = self.steam_path / 'depotcache'
                 steam_depot_path.mkdir(parents=True, exist_ok=True)
@@ -2080,7 +2119,7 @@ class CaiBackend:
                 return False
 
             # 3. 生成 lua 文件（SteamTools）
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 stplug_path = self.steam_path / 'config' / 'stplug-in'
                 stplug_path.mkdir(parents=True, exist_ok=True)
                 lua_filepath = stplug_path / f"{app_id}.lua"
@@ -2094,6 +2133,7 @@ class CaiBackend:
                     await self._add_free_dlcs_to_lua(app_id, lua_filepath)
                 if patch_depot_key:
                     await self.patch_lua_with_depotkey(app_id, lua_filepath)
+                self._mirror_lua_to_ost(lua_filepath)
             else:
                 all_depots = {}
                 if all_depots:
@@ -2158,7 +2198,7 @@ class CaiBackend:
                 manifest_files = list(extract_path.rglob('*.manifest'))
                 lua_files = list(extract_path.rglob('*.lua'))
 
-                if unlocker_type == "steamtools":
+                if unlocker_type in ("steamtools", "opensteamtools"):
                     stplug_path = self.steam_path / 'config' / 'stplug-in'
                     stplug_path.mkdir(parents=True, exist_ok=True)
 
@@ -2192,6 +2232,7 @@ class CaiBackend:
                         await self._add_free_dlcs_to_lua(app_id, lua_filepath)
                     if patch_depot_key:
                         await self.patch_lua_with_depotkey(app_id, lua_filepath)
+                    self._mirror_lua_to_ost(lua_filepath)
 
                 else:
                     # GreenLuma
@@ -2371,7 +2412,7 @@ class CaiBackend:
                     self.log.warning(f"GitHub API: 复制清单文件 {manifest_file.name} 失败: {e}")
             
             # 生成或更新lua文件
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 stplug_path = self.steam_path / 'config' / 'stplug-in'
                 stplug_path.mkdir(parents=True, exist_ok=True)
                 
@@ -2407,7 +2448,8 @@ class CaiBackend:
                 # 修补depot密钥
                 if patch_depot_key:
                     await self.patch_lua_with_depotkey(app_id, lua_filepath)
-            
+                self._mirror_lua_to_ost(lua_filepath)
+
             # 清理临时文件
             shutil.rmtree(temp_dir, ignore_errors=True)
             
@@ -2505,7 +2547,7 @@ class CaiBackend:
                 return True  # 仅密钥源，无密钥视为正常完成
             
             # 4. 根据解锁工具类型处理
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 return await self._process_steamautocracks_v2_for_steamtools(app_id, valid_depots, depot_manifest_map, use_st_auto_update, add_all_dlc, patch_depot_key, depotkeys_data)
             else:
                 return await self._process_steamautocracks_v2_for_greenluma(app_id, valid_depots)
@@ -2602,7 +2644,8 @@ class CaiBackend:
             if patch_depot_key:
                 self.log.info("开始修补创意工坊depotkey...")
                 await self._patch_lua_with_existing_depotkeys(app_id, lua_filepath, depotkeys_data)
-            
+            self._mirror_lua_to_ost(lua_filepath)
+
             return True
             
         except Exception as e:
@@ -3057,7 +3100,7 @@ class CaiBackend:
             manifest_files = list(extract_path.rglob('*.manifest'))
             lua_files = list(extract_path.rglob('*.lua'))
             
-            if unlocker_type == "steamtools":
+            if unlocker_type in ("steamtools", "opensteamtools"):
                 self.log.info(f"SteamTools 自动更新模式: {'已启用' if use_st_auto_update else '已禁用'}")
                 stplug_path = self.steam_path / 'config' / 'stplug-in'
                 
@@ -3095,6 +3138,7 @@ class CaiBackend:
                 if patch_depot_key:
                     self.log.info("开始修补创意工坊depotkey...")
                     await self.patch_lua_with_depotkey(app_id, lua_filepath)
+                self._mirror_lua_to_ost(lua_filepath)
 
             else:
                 self.log.info(f'检测到 GreenLuma/标准模式，将处理来自 {source_name} 的文件。')
@@ -3291,7 +3335,7 @@ class CaiBackend:
         all_files_in_tree = r2_json.get('tree', [])
         files_to_download = all_files_in_tree[:]
         
-        if unlocker_type == "steamtools" and use_st_auto_update:
+        if unlocker_type in ("steamtools", "opensteamtools") and use_st_auto_update:
             files_to_download = [item for item in all_files_in_tree if not item['path'].endswith('.manifest')]
         
         if not files_to_download and all_files_in_tree: self.log.info("没有需要下载的文件（可能是因为自动更新模式跳过了所有文件）。")
@@ -3319,7 +3363,7 @@ class CaiBackend:
                 all_depots = depots_config.get('depots', {})
             except Exception as e: self.log.error(f"解析 key.vdf 失败: {e}")
 
-        if unlocker_type == "steamtools":
+        if unlocker_type in ("steamtools", "opensteamtools"):
             self.log.info(f"SteamTools 自动更新模式: {'已启用' if use_st_auto_update else '已禁用'}")
             stplug_path = self.steam_path / 'config' / 'stplug-in'
             lua_filename = f"{app_id}.lua"
@@ -3344,6 +3388,7 @@ class CaiBackend:
             if patch_depot_key:
                 self.log.info("开始修补创意工坊depotkey...")
                 await self.patch_lua_with_depotkey(app_id, lua_filepath)
+            self._mirror_lua_to_ost(lua_filepath)
 
         else:
             self.log.info("检测到 GreenLuma/标准模式，将复制 .manifest 文件到 depotcache。")
@@ -3716,7 +3761,8 @@ print("OK" if result["success"] else result.get("error","fail"))
             # 写回文件
             async with aiofiles.open(lua_path, 'w', encoding='utf-8') as f:
                 await f.write(new_content)
-            
+            self._mirror_lua_to_ost(lua_path)
+
             self.log.info(f"[固定版本] 已更新 {lua_filename}，添加了 {len(manifest_lines)} 个 manifest 配置")
             
         except Exception as e:

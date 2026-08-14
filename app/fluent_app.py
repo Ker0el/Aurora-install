@@ -37,6 +37,13 @@ def _get_app_root() -> Path:
 
 APP_ROOT = _get_app_root()
 
+def resource_path(name: str) -> Path:
+    if getattr(sys, 'frozen', False):
+        base = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
+    else:
+        base = APP_ROOT
+    return base / name
+
 # 导入后端
 from backend.cai_backend import CaiBackend, get_steam_lang, CURRENT_VERSION, GITHUB_REPO
 
@@ -195,7 +202,7 @@ TEXTS = {
         "theme_color_changed": "主题颜色已更改为 {0}\n\n是否立即重启应用以应用更改？",
         "restart_steam_confirm": "重启 Steam",
         "restart_steam_message": "确定要重启 Steam 吗？\n\n这将关闭当前运行的 Steam 并重新启动。",
-        "total_games": "共 {0} 个游戏 | SteamTools: {1} | GreenLuma: {2}",
+        "total_games": "共 {0} 个游戏 | SteamTools: {1} | OpenSteamTools: {2}",
         "load_failed": "加载失败: {0}",
         "reset_settings": "重置设置",
         "reset_settings_message": "确定要将所有设置重置为默认值吗？\n\n此操作不可撤销。",
@@ -219,6 +226,7 @@ TEXTS = {
         "unlocker_mode": "解锁工具模式",
         "auto_detect": "自动检测",
         "force_steamtools": "强制 SteamTools",
+        "force_opensteamtools": "强制 OpenSteamTools",
         "force_greenluma": "强制 GreenLuma",
         "force_unlocker_hint": "强制使用指定的解锁工具",
         "download_timeout": "入库超时时间",
@@ -315,6 +323,9 @@ TEXTS = {
         "show_progress_bar_hint": "在搜索和入库过程中显示进度条，提供更好的用户体验",
         "name_not_found": "名称未找到",
         "fetch_failed": "获取失败",
+        "no_more_items": "没有更多了",
+        "reinstall_confirm_title": "重新入库确认",
+        "reinstall_confirm": "AppID {0} 已存在（{1}），仍要重新入库吗？",
     },
     "en_US": {
         "app_title": "AuroraInstall",
@@ -360,7 +371,7 @@ TEXTS = {
         "theme_color_changed": "Theme color changed to {0}\n\nRestart the application now to apply changes?",
         "restart_steam_confirm": "Restart Steam",
         "restart_steam_message": "Are you sure you want to restart Steam?\n\nThis will close the currently running Steam and restart it.",
-        "total_games": "Total: {0} games | SteamTools: {1} | GreenLuma: {2}",
+        "total_games": "Total: {0} games | SteamTools: {1} | OpenSteamTools: {2}",
         "load_failed": "Load failed: {0}",
         "reset_settings": "Reset Settings",
         "reset_settings_message": "Are you sure you want to reset all settings to default?\n\nThis action cannot be undone.",
@@ -382,6 +393,7 @@ TEXTS = {
         "unlocker_mode": "Unlocker Mode",
         "auto_detect": "Auto Detect",
         "force_steamtools": "Force SteamTools",
+        "force_opensteamtools": "Force OpenSteamTools",
         "force_greenluma": "Force GreenLuma",
         "force_unlocker_hint": "Force use of specified unlocker",
         "download_timeout": "Download Timeout",
@@ -475,6 +487,9 @@ TEXTS = {
         "show_progress_bar_hint": "Show progress bar during search and installation for better user experience",
         "name_not_found": "Name Not Found",
         "fetch_failed": "Fetch Failed",
+        "no_more_items": "No more items",
+        "reinstall_confirm_title": "Re-install Confirm",
+        "reinstall_confirm": "AppID {0} already exists ({1}), re-install anyway?",
     },
     "fr_FR": {
         "app_title": "AuroraInstall",
@@ -548,6 +563,7 @@ TEXTS = {
         "auto_detect": "Détection automatique",
         "force_steamtools": "Forcer SteamTools",
         "force_greenluma": "Forcer GreenLuma",
+        "force_opensteamtools": "Forcer OpenSteamTools",
         "force_unlocker_hint": "Forcer l'utilisation du déverrouilleur spécifié",
         "download_timeout": "Délai de téléchargement",
         "download_timeout_hint": "Délai d'attente pour les téléchargements de manifestes (secondes), augmentez si le réseau est lent",
@@ -647,6 +663,9 @@ TEXTS = {
 
         "name_not_found": "Nom introuvable",
         "fetch_failed": "Échec de récupération",
+        "no_more_items": "Plus rien à afficher",
+        "reinstall_confirm_title": "Confirmation de réinstallation",
+        "reinstall_confirm": "L'AppID {0} existe déjà ({1}), réinstaller quand même ?",
     },
     "ru_RU": {
         "app_title": "AuroraInstall",
@@ -720,6 +739,7 @@ TEXTS = {
         "auto_detect": "Автоопределение",
         "force_steamtools": "Принудительно SteamTools",
         "force_greenluma": "Принудительно GreenLuma",
+        "force_opensteamtools": "Принудительно OpenSteamTools",
         "force_unlocker_hint": "Принудительно использовать указанный инструмент разблокировки",
         "download_timeout": "Таймаут загрузки",
         "download_timeout_hint": "Таймаут в секундах для загрузки манифестов, увеличьте при медленной сети",
@@ -819,6 +839,9 @@ TEXTS = {
 
         "name_not_found": "Имя не найдено",
         "fetch_failed": "Ошибка получения",
+        "no_more_items": "Больше ничего нет",
+        "reinstall_confirm_title": "Подтверждение переустановки",
+        "reinstall_confirm": "AppID {0} уже существует ({1}), всё равно переустановить?",
     },
     "de_DE": {
         "app_title": "AuroraInstall",
@@ -892,6 +915,7 @@ TEXTS = {
         "auto_detect": "Automatische Erkennung",
         "force_steamtools": "SteamTools erzwingen",
         "force_greenluma": "GreenLuma erzwingen",
+        "force_opensteamtools": "OpenSteamTools erzwingen",
         "force_unlocker_hint": "Verwendung des angegebenen Unlockers erzwingen",
         "download_timeout": "Download-Timeout",
         "download_timeout_hint": "Timeout in Sekunden für Manifest-Downloads, erhöhen Sie bei langsamem Netzwerk",
@@ -991,6 +1015,9 @@ TEXTS = {
 
         "name_not_found": "Name nicht gefunden",
         "fetch_failed": "Abruf fehlgeschlagen",
+        "no_more_items": "Keine weiteren Elemente",
+        "reinstall_confirm_title": "Neuinstallation bestätigen",
+        "reinstall_confirm": "AppID {0} ist bereits vorhanden ({1}), trotzdem neu installieren?",
     },
     "ja_JP": {
         "app_title": "AuroraInstall",
@@ -1064,6 +1091,7 @@ TEXTS = {
         "auto_detect": "自動検出",
         "force_steamtools": "SteamToolsを強制",
         "force_greenluma": "GreenLumaを強制",
+        "force_opensteamtools": "OpenSteamToolsを強制",
         "force_unlocker_hint": "指定されたアンロッカーを強制的に使用",
         "download_timeout": "ダウンロードタイムアウト",
         "download_timeout_hint": "マニフェストダウンロードのタイムアウト（秒）、ネットワークが遅い場合は増やしてください",
@@ -1166,6 +1194,9 @@ TEXTS = {
         "hide_trainer_hint": "サイドバーのトレーナーオプションを非表示",
         "name_not_found": "名前が見つかりません",
         "fetch_failed": "取得失敗",
+        "no_more_items": "これ以上ありません",
+        "reinstall_confirm_title": "再登録の確認",
+        "reinstall_confirm": "AppID {0} は既に存在します（{1}）。それでも再登録しますか？",
     },
     "zh_TW": {
         "app_title": "極光入库",
@@ -1246,6 +1277,7 @@ TEXTS = {
         "auto_detect": "自動偵測",
         "force_steamtools": "強制 SteamTools",
         "force_greenluma": "強制 GreenLuma",
+        "force_opensteamtools": "強制 OpenSteamTools",
         "force_unlocker_hint": "強制使用指定的解鎖工具",
         "download_timeout": "入库逾時時間",
         "download_timeout_hint": "下載清單的逾時時間（秒），網路較慢時可適度增加",
@@ -1351,6 +1383,9 @@ TEXTS = {
         "hide_trainer_hint": "隱藏側欄中的修改器選項",
         "name_not_found": "名稱未找到",
         "fetch_failed": "獲取失敗",
+        "no_more_items": "沒有更多了",
+        "reinstall_confirm_title": "重新入库確認",
+        "reinstall_confirm": "AppID {0} 已存在（{1}），仍要重新入库嗎？",
     },
 }
 
@@ -2049,6 +2084,8 @@ def _zip_entry_target(name, steam_path, rec_path):
         return steam_path / 'depotcache' / name[len('depotcache/'):] if steam_path else None
     if name.startswith('config_depotcache/'):
         return steam_path / 'config' / 'depotcache' / name[len('config_depotcache/'):] if steam_path else None
+    if name.startswith('config/lua/'):
+        return steam_path / 'config' / 'lua' / name[len('config/lua/'):] if steam_path else None
     if name.startswith('appcache_depotcache/'):
         return steam_path / 'appcache' / 'depotcache' / name[len('appcache_depotcache/'):] if steam_path else None
     if name == 'config.vdf':
@@ -2094,11 +2131,12 @@ class GameCard(CardWidget):
         # 网络管理器（先初始化）
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
-        
+        self._cover_fallback = False  # 是否已回退到备用 CDN
+
         # 创建布局
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
-        
+
         # 游戏封面
         self.coverLabel = QLabel(self)
         self.coverLabel.setFixedSize(120, 56)
@@ -2187,19 +2225,26 @@ class GameCard(CardWidget):
     
     def load_cover(self):
         """加载游戏封面"""
-        # Steam 封面 URL
-        cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
+        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
+        cdn = "akamai" if self._cover_fallback else "cloudflare"
+        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         self.network_manager.get(request)
-    
+
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        ok = False
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
+                ok = True
+        if not ok and not self._cover_fallback:
+            # 主 CDN 失败，回退备用 CDN 重试一次
+            self._cover_fallback = True
+            self.load_cover()
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -2332,7 +2377,8 @@ class GameCardGrid(CardWidget):
         # 网络管理器（先初始化）
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
-        
+        self._cover_fallback = False  # 是否已回退到备用 CDN
+
         # 创建垂直布局
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setContentsMargins(10, 10, 10, 10)
@@ -2428,19 +2474,26 @@ class GameCardGrid(CardWidget):
     
     def load_cover(self):
         """加载游戏封面"""
-        # Steam 封面 URL
-        cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
+        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
+        cdn = "akamai" if self._cover_fallback else "cloudflare"
+        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         self.network_manager.get(request)
-    
+
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        ok = False
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
+                ok = True
+        if not ok and not self._cover_fallback:
+            # 主 CDN 失败，回退备用 CDN 重试一次
+            self._cover_fallback = True
+            self.load_cover()
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -3199,10 +3252,11 @@ class HomePage(ScrollArea):
             # 统计游戏数量
             st_games = files_data.get('st', [])
             gl_games = files_data.get('gl', [])
-            total = len(st_games) + len(gl_games)
-            
-            self.stats_label.setText(tr("total_games", total, len(st_games), len(gl_games)))
-            
+            ost_games = files_data.get('ost', [])
+            total = len(st_games) + len(gl_games) + len(ost_games)
+
+            self.stats_label.setText(tr("total_games", total, len(st_games) + len(ost_games), len(gl_games)))
+
             # 创建游戏数据列表
             self.all_games_data = []
             for game in st_games:
@@ -3210,7 +3264,27 @@ class HomePage(ScrollArea):
                     self.all_games_data.append(('st', game))
             for game in gl_games:
                 self.all_games_data.append(('gl', game))
-            
+            for game in ost_games:
+                self.all_games_data.append(('st', game))
+
+            # 合并已入库记录：扫描缺失的 appid 用记录补充（已有的保留扫描数据）
+            seen = {str(g.get('appid', '')) for _, g in self.all_games_data}
+            for rec in _load_installed_records():
+                aid = str(rec.get('appid', '')).strip()
+                if not aid.isdigit() or aid in seen:
+                    continue
+                src = str(rec.get('source', '') or '')
+                if 'greenluma' in src or 'gl' in src:
+                    st = 'gl'
+                else:
+                    st = 'st'  # OpenSteamTools 等其余来源统一走 st
+                self.all_games_data.append((st, {
+                    'appid': aid,
+                    'game_name': rec.get('name', ''),
+                    'status': 'ok',
+                    'mode': 'auto',
+                }))
+
             # 按 AppID 排序（降序）
             self.all_games_data.sort(key=lambda x: int(x[1].get('appid', '0')) if x[1].get('appid', '0').isdigit() else 0, reverse=True)
 
@@ -3757,7 +3831,8 @@ class SearchResultCard(CardWidget):
         # 网络管理器
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
-        
+        self._cover_fallback = False  # 是否已回退到备用 CDN
+
         # 创建布局
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
@@ -3828,18 +3903,26 @@ class SearchResultCard(CardWidget):
 
     def load_cover(self):
         """加载游戏封面"""
-        cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
+        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
+        cdn = "akamai" if self._cover_fallback else "cloudflare"
+        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         self.network_manager.get(request)
 
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        ok = False
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
+                ok = True
+        if not ok and not self._cover_fallback:
+            # 主 CDN 失败，回退备用 CDN 重试一次
+            self._cover_fallback = True
+            self.load_cover()
         reply.deleteLater()
 
     def on_select_clicked(self):
@@ -3935,7 +4018,8 @@ class SearchResultCardGrid(CardWidget):
         # 网络管理器
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
-        
+        self._cover_fallback = False  # 是否已回退到备用 CDN
+
         # 创建垂直布局
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setContentsMargins(10, 10, 10, 10)
@@ -4013,18 +4097,26 @@ class SearchResultCardGrid(CardWidget):
     
     def load_cover(self):
         """加载游戏封面"""
-        cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
+        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
+        cdn = "akamai" if self._cover_fallback else "cloudflare"
+        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         self.network_manager.get(request)
-    
+
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        ok = False
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
+                ok = True
+        if not ok and not self._cover_fallback:
+            # 主 CDN 失败，回退备用 CDN 重试一次
+            self._cover_fallback = True
+            self.load_cover()
         reply.deleteLater()
     
     def on_select_clicked(self):
@@ -4299,7 +4391,9 @@ class SearchPage(ScrollArea):
         self._rec_worker = None
         self._rec_games = []  # 缓存推荐游戏数据
         self._rec_shown = 0
+        self._result_shown = 0  # 搜索结果已显示的条数（分页用）
         self._show_more_btn = None
+        self._rec_end_label = None  # 推荐"已到底"提示标签
         self._progress_lock = threading.Lock()
         self._progress_target = 0
         self._progress_text = ""
@@ -4871,6 +4965,7 @@ class SearchPage(ScrollArea):
         if hasattr(self, '_show_more_btn') and self._show_more_btn:
             self._show_more_btn.deleteLater()
             self._show_more_btn = None
+        self._clear_rec_end_label()
 
         self._rec_shown = 0
         self._append_recommendations(20)
@@ -4880,6 +4975,9 @@ class SearchPage(ScrollArea):
         games = getattr(self, '_rec_games', [])
         start = self._rec_shown
         end = min(start + count, len(games))
+
+        # 移除旧的"已到底"提示（如果有）
+        self._clear_rec_end_label()
 
         for game in games[start:end]:
             if self.current_view_mode == "grid":
@@ -4892,11 +4990,9 @@ class SearchPage(ScrollArea):
         self._rec_shown = end
 
         # 移除旧的"显示更多"按钮（如果有）
-        if hasattr(self, '_show_more_btn') and self._show_more_btn:
-            self._show_more_btn.deleteLater()
-            self._show_more_btn = None
+        self._clear_show_more_btn()
 
-        # 如果还有更多，添加"显示更多"按钮
+        # 如果还有更多，添加"显示更多"按钮；否则显示"已到底"提示
         if self._rec_shown < len(games):
             btn = PushButton(tr("show_more"), self)
             btn.setFixedWidth(160)
@@ -4911,14 +5007,85 @@ class SearchPage(ScrollArea):
             self.results_layout.addWidget(wrapper)
         else:
             self._show_more_btn = None
+            self._show_rec_end_label()
+
+    def _clear_show_more_btn(self):
+        """移除"显示更多"按钮"""
+        if hasattr(self, '_show_more_btn') and self._show_more_btn:
+            try:
+                self._show_more_btn.deleteLater()
+            except RuntimeError:
+                pass
+            self._show_more_btn = None
+
+    def _show_rec_end_label(self):
+        """推荐已到底，显示灰色提示标签"""
+        self._clear_rec_end_label()
+        label = CaptionLabel(tr("no_more_items"), self)
+        label.setTextColor("#606060", "#d2d2d2")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        wrapper = QWidget(self)
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 4, 0, 4)
+        wrapper_layout.addStretch(1)
+        wrapper_layout.addWidget(label)
+        wrapper_layout.addStretch(1)
+        self._rec_end_label = wrapper
+        self.results_layout.addWidget(wrapper)
+
+    def _clear_rec_end_label(self):
+        """移除"已到底"提示标签"""
+        if hasattr(self, '_rec_end_label') and self._rec_end_label:
+            try:
+                self._rec_end_label.deleteLater()
+            except RuntimeError:
+                pass
+            self._rec_end_label = None
+
+    def _show_more_search(self):
+        """搜索结果分页：追加显示 20 个"""
+        if not self.search_results:
+            return
+        sorted_results = self.sort_search_results(self.search_results)
+        start = self._result_shown
+        end = min(start + 20, len(sorted_results))
+        for game in sorted_results[start:end]:
+            if self.current_view_mode == "grid":
+                card = SearchResultCardGrid(game['appid'], game['name'], self)
+            else:
+                card = SearchResultCard(game['appid'], game['name'], self)
+            self.results_layout.addWidget(card)
+            self.result_cards.append(card)
+        self._result_shown = end
+        # 移除旧的"显示更多"按钮（如果有）
+        self._clear_show_more_btn()
+        if end < len(sorted_results):
+            self._add_search_more_btn()
+
+    def _add_search_more_btn(self):
+        """在尾部添加"显示更多"按钮（搜索结果分页用）"""
+        self._clear_show_more_btn()
+        btn = PushButton(tr("show_more"), self)
+        btn.setFixedWidth(160)
+        btn.clicked.connect(self._show_more_search)
+        wrapper = QWidget(self)
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 4, 0, 4)
+        wrapper_layout.addStretch(1)
+        wrapper_layout.addWidget(btn)
+        wrapper_layout.addStretch(1)
+        self._show_more_btn = wrapper
+        self.results_layout.addWidget(wrapper)
 
     def on_search(self):
         """搜索游戏"""
         query = self.search_input.text().strip()
-        # 清掉"显示更多"按钮
+        # 清掉"显示更多"按钮和"已到底"提示，重置搜索结果分页
         if hasattr(self, '_show_more_btn') and self._show_more_btn:
             self._show_more_btn.deleteLater()
             self._show_more_btn = None
+        self._clear_rec_end_label()
+        self._result_shown = 0
         if not query:
             for card in self.result_cards:
                 card.deleteLater()
@@ -5019,7 +5186,7 @@ class SearchPage(ScrollArea):
             )
     
     def display_search_results(self, results):
-        """显示搜索结果"""
+        """显示搜索结果（分页：每次最多显示 20 个，剩余通过"显示更多"追加）"""
         # 隐藏推荐标签
         if hasattr(self, '_rec_label') and self._rec_label:
             self._rec_label.hide()
@@ -5027,6 +5194,9 @@ class SearchPage(ScrollArea):
         for card in self.result_cards:
             card.deleteLater()
         self.result_cards.clear()
+        # 清掉"显示更多"按钮和"已到底"提示
+        self._clear_show_more_btn()
+        self._clear_rec_end_label()
 
         # 重置全选状态（新结果默认不勾选）
         try:
@@ -5035,20 +5205,29 @@ class SearchPage(ScrollArea):
             self.select_all_check.blockSignals(False)
         except Exception:
             pass
-        
+
         # 根据排序选项对结果进行排序
         sorted_results = self.sort_search_results(results)
-        
+
+        # 新搜索（_result_shown==0）默认显示前 20 个；切换视图/排序时保持已展开数量
+        limit = self._result_shown if self._result_shown > 0 else 20
+        limit = min(limit, len(sorted_results))
+
         # 创建结果卡片
-        for game in sorted_results:
+        for game in sorted_results[:limit]:
             # 根据视图模式创建不同类型的卡片
             if self.current_view_mode == "grid":
                 card = SearchResultCardGrid(game['appid'], game['name'], self)
             else:
                 card = SearchResultCard(game['appid'], game['name'], self)
-            
+
             self.results_layout.addWidget(card)
             self.result_cards.append(card)
+
+        self._result_shown = limit
+        # 还有剩余则添加"显示更多"按钮
+        if limit < len(sorted_results):
+            self._add_search_more_btn()
     
 
     
@@ -5192,18 +5371,17 @@ class SearchPage(ScrollArea):
         if not appid:
             return
 
-        # 去重检查：已入库（记录中或清单文件已存在）则跳过
+        # 去重检查：已入库（记录中或清单文件已存在）则提示，但仍允许重新入库
         existing = _get_existing_install_status(appid)
         if existing:
             status = tr("dup_status_record") if existing == "record" else tr("dup_status_files")
             InfoBar.warning(
-                title=tr("skip_duplicate_title"),
-                content=tr("already_installed", appid, status),
+                title=tr("reinstall_confirm_title"),
+                content=tr("reinstall_confirm", appid, status),
                 parent=self,
                 position=InfoBarPosition.TOP,
                 duration=3000
             )
-            return
 
         self.current_appid = str(appid)
 
@@ -6661,7 +6839,7 @@ class SettingsPage(ScrollArea):
         app_config_card.addGroup(FluentIcon.SAVE, tr("save_log_files"), tr("save_log_files_hint"), self.logging_check)
 
         self.unlocker_combo = ComboBox()
-        self.unlocker_combo.addItems([tr("auto_detect"), tr("force_steamtools"), tr("force_greenluma")])
+        self.unlocker_combo.addItems([tr("auto_detect"), tr("force_steamtools"), tr("force_opensteamtools"), tr("force_greenluma")])
         self.unlocker_combo.setCurrentIndex(0)
         self.unlocker_combo.setFixedWidth(180)
         app_config_card.addGroup(FluentIcon.SETTING, tr("unlocker_mode"), tr("force_unlocker_hint"), self.unlocker_combo)
@@ -7543,12 +7721,16 @@ class SettingsPage(ScrollArea):
         from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
         # 收款码数据：(section_title, wechat_url, alipay_url)
-        assets_dir = APP_ROOT / 'assets'
         sections = [
             (
                 tr("donate_title"),
-                str(assets_dir / 'donate_wechat.jpg'),
-                str(assets_dir / 'donate_alipay.jpg'),
+                str(resource_path('assets/donate_wechat.jpg')),
+                str(resource_path('assets/donate_alipay.jpg')),
+            ),
+            (
+                tr("donate_title"),
+                str(resource_path('assets/donate_wechat.jpg')),
+                str(resource_path('assets/donate_alipay.jpg')),
             ),
         ]
 
@@ -7679,8 +7861,10 @@ class SettingsPage(ScrollArea):
                 force_unlocker = config.get("force_unlocker_type", "auto")
                 if force_unlocker == "steamtools":
                     new_idx = 1
-                elif force_unlocker == "greenluma":
+                elif force_unlocker == "opensteamtools":
                     new_idx = 2
+                elif force_unlocker == "greenluma":
+                    new_idx = 3
                 else:
                     new_idx = 0
                 if self.unlocker_combo.currentIndex() != new_idx:
@@ -7869,7 +8053,7 @@ class SettingsPage(ScrollArea):
             
             # 保存解锁工具模式
             if self.unlocker_combo:
-                unlocker_map = {0: "auto", 1: "steamtools", 2: "greenluma"}
+                unlocker_map = {0: "auto", 1: "steamtools", 2: "opensteamtools", 3: "greenluma"}
                 config["force_unlocker_type"] = unlocker_map.get(self.unlocker_combo.currentIndex(), "auto")
             
             # 保存SteamTools版本模式设置
