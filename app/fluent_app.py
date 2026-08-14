@@ -1865,6 +1865,16 @@ _NEW_FEATURE_TEXTS = {
         "clear_success": "已清空",
         "clear_failed": "清空失败",
         "launch_steam": "启动 Steam",
+        "init_ost": "初始化",
+        "init_ost_done": "初始化已完成，可以搜索游戏入库啦！",
+        "init_ost_running": "检测到 Steam 正在运行，请先手动关闭 Steam 后再点击「重试」",
+        "init_ost_retry": "重试",
+        "init_ost_failed": "初始化失败",
+        "init_ost_pick_dir": "请选择 Steam 安装目录",
+        "init_ost_pick_confirm": "确认",
+        "init_ost_installing": "正在下载并安装 OpenSteamTool...",
+        "init_ost_success": "OpenSteamTool 初始化完成（版本 {0}）",
+        "init_ost_no_path": "未找到 Steam 安装目录",
         "gbe_launch": "免 Steam 启动",
         "gbe_restore": "还原 GBE",
         "gbe_pick_dir": "选择游戏目录（含 steam_api*.dll）",
@@ -1943,6 +1953,16 @@ _NEW_FEATURE_TEXTS = {
         "clear_success": "Cleared",
         "clear_failed": "Clear failed",
         "launch_steam": "Launch Steam",
+        "init_ost": "Initialize",
+        "init_ost_done": "Initialization complete. You can search and add games now!",
+        "init_ost_running": "Steam is running. Please close Steam manually, then click \"Retry\"",
+        "init_ost_retry": "Retry",
+        "init_ost_failed": "Initialization failed",
+        "init_ost_pick_dir": "Select the Steam installation directory",
+        "init_ost_pick_confirm": "OK",
+        "init_ost_installing": "Downloading and installing OpenSteamTool...",
+        "init_ost_success": "OpenSteamTool initialized (version {0})",
+        "init_ost_no_path": "Steam installation directory not found",
         "gbe_launch": "Launch without Steam",
         "gbe_restore": "Restore GBE",
         "gbe_pick_dir": "Select game folder (with steam_api*.dll)",
@@ -2263,7 +2283,7 @@ class GameCard(CardWidget):
         self.titleLabel.setWordWrap(False)
         
         # AppID 和来源
-        source_text = "SteamTools" if source_type == "st" else "GreenLuma"
+        source_text = "SteamTools" if source_type == "st" else ("OpenSteamTools" if source_type == "ost" else "GreenLuma")
         self.infoLabel = CaptionLabel(f"AppID: {appid} | {source_text}", self)
         self.infoLabel.setTextColor("#606060", "#d2d2d2")
 
@@ -2271,9 +2291,9 @@ class GameCard(CardWidget):
         self.sourceLabel = CaptionLabel(f"{tr('source_label')}: {_source_display_name(source)}", self)
         self.sourceLabel.setTextColor("#6ee7b7", "#6ee7b7")
 
-        # 版本模式标签（仅SteamTools）
+        # 版本模式标签（仅SteamTools/OpenSteamTools）
         self.modeLabel = None
-        if source_type == "st":
+        if source_type in ("st", "ost"):
             mode_text = tr("fixed_version") if mode == "fixed" else tr("auto_update")
             mode_color = "#ff9800" if mode == "fixed" else "#6ee7b7"
             self.modeLabel = CaptionLabel(mode_text, self)
@@ -2286,9 +2306,9 @@ class GameCard(CardWidget):
         self.moreButton.installEventFilter(ToolTipFilter(self.moreButton, showDelay=150, position=ToolTipPosition.TOP))
         self.moreButton.clicked.connect(self._show_more_menu)
 
-        # 版本切换按钮（仅SteamTools）
+        # 版本切换按钮（仅SteamTools/OpenSteamTools）
         self.toggleButton = None
-        if source_type == "st":
+        if source_type in ("st", "ost"):
             self.toggleButton = TransparentToolButton(FluentIcon.UPDATE, self)
             self.toggleButton.setFixedSize(32, 32)
             self.toggleButton.setToolTip(tr("toggle_version_mode"))
@@ -2365,17 +2385,6 @@ class GameCard(CardWidget):
             if parent:
                 parent.delete_game(self.appid, self.source_type)
     
-    def on_toggle_clicked(self):
-        """版本切换按钮点击"""
-        if self.parent():
-            parent = self.parent()
-            while parent and not isinstance(parent, HomePage):
-                parent = parent.parent()
-            if parent:
-                # 构造ST文件名
-                filename = f"{self.appid}.lua"
-                parent.toggle_st_version(filename, self.appid)
-    
     def update_mode_label(self, is_fixed):
         """更新版本模式标签"""
         if self.modeLabel:
@@ -2395,7 +2404,7 @@ class GameCard(CardWidget):
             if parent:
                 # 构造ST文件名
                 filename = f"{self.appid}.lua"
-                parent.toggle_st_version(filename, self.appid)
+                parent.toggle_st_version(filename, self.appid, self.source_type)
 
     def copy_cover(self):
         """复制封面URL到剪贴板"""
@@ -2512,7 +2521,7 @@ class GameCardGrid(CardWidget):
         self.titleLabel.setMaximumHeight(60)  # 大约3行文字
         
         # AppID 和来源
-        source_text = "SteamTools" if source_type == "st" else "GreenLuma"
+        source_text = "SteamTools" if source_type == "st" else ("OpenSteamTools" if source_type == "ost" else "GreenLuma")
         self.infoLabel = CaptionLabel(f"AppID: {appid} | {source_text}", self)
         self.infoLabel.setTextColor("#606060", "#d2d2d2")
         self.infoLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2522,25 +2531,25 @@ class GameCardGrid(CardWidget):
         self.sourceLabel.setTextColor("#6ee7b7", "#6ee7b7")
         self.sourceLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # 版本模式标签（仅SteamTools）
+        # 版本模式标签（仅SteamTools/OpenSteamTools）
         self.modeLabel = None
-        if source_type == "st":
+        if source_type in ("st", "ost"):
             mode_text = tr("fixed_version") if mode == "fixed" else tr("auto_update")
             mode_color = "#ff9800" if mode == "fixed" else "#6ee7b7"
             self.modeLabel = CaptionLabel(mode_text, self)
             self.modeLabel.setTextColor(mode_color, mode_color)
             self.modeLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+
         # 更多按钮
         self.moreButton = TransparentToolButton(FluentIcon.MORE, self)
         self.moreButton.setFixedSize(32, 32)
         self.moreButton.setToolTip("更多")
         self.moreButton.installEventFilter(ToolTipFilter(self.moreButton, showDelay=150, position=ToolTipPosition.TOP))
         self.moreButton.clicked.connect(self._show_more_menu)
-        
-        # 版本切换按钮（仅SteamTools）
+
+        # 版本切换按钮（仅SteamTools/OpenSteamTools）
         self.toggleButton = None
-        if source_type == "st":
+        if source_type in ("st", "ost"):
             self.toggleButton = TransparentToolButton(FluentIcon.UPDATE, self)
             self.toggleButton.setFixedSize(32, 32)
             self.toggleButton.setToolTip(tr("toggle_version_mode"))
@@ -2622,7 +2631,7 @@ class GameCardGrid(CardWidget):
                 parent = parent.parent()
             if parent:
                 filename = f"{self.appid}.lua"
-                parent.toggle_st_version(filename, self.appid)
+                parent.toggle_st_version(filename, self.appid, self.source_type)
 
     def update_mode_label(self, is_fixed):
         """更新版本模式标签"""
@@ -3044,11 +3053,11 @@ class HomePage(ScrollArea):
         self.launch_steam_btn.setFixedHeight(32)
         self.launch_steam_btn.clicked.connect(self.on_launch_steam_clicked)
 
-        # 免 Steam 启动按钮（GBE）
-        self.gbe_launch_btn = PushButton(tr("gbe_launch"), self)
-        self.gbe_launch_btn.setIcon(FluentIcon.PLAY)
-        self.gbe_launch_btn.setFixedHeight(32)
-        self.gbe_launch_btn.clicked.connect(self.on_gbe_launch_clicked)
+        # 初始化 OpenSteamTool 按钮
+        self.init_ost_btn = PushButton(tr("init_ost"), self)
+        self.init_ost_btn.setIcon(FluentIcon.DOWNLOAD)
+        self.init_ost_btn.setFixedHeight(32)
+        self.init_ost_btn.clicked.connect(self.on_init_ost_clicked)
 
         # 清空已入库按钮
         self.clear_installed_btn = PushButton(tr("clear_installed"), self)
@@ -3059,8 +3068,8 @@ class HomePage(ScrollArea):
         header_layout.addWidget(self.title)
         header_layout.addStretch(1)
         header_layout.addWidget(self.stats_label)
+        header_layout.addWidget(self.init_ost_btn)
         header_layout.addWidget(self.launch_steam_btn)
-        header_layout.addWidget(self.gbe_launch_btn)
         header_layout.addWidget(self.clear_installed_btn)
         header_layout.addWidget(self.refresh_button)
         self.mainLayout.addLayout(header_layout)
@@ -3219,6 +3228,136 @@ class HomePage(ScrollArea):
         self.refresh_button.setEnabled(True)
         if hasattr(self.refresh_button, 'setSpinning'):
             self.refresh_button.setSpinning(False)
+
+    def on_init_ost_clicked(self):
+        """初始化 OpenSteamTool：定位 Steam 目录 → 确认未运行 → 下载安装"""
+        self.init_ost_btn.setEnabled(False)
+        self._do_init_ost()
+
+    def _do_init_ost(self):
+        """初始化流程（可被「重试」重新调用）"""
+        from PyQt6.QtWidgets import QFileDialog
+
+        async def _init():
+            async with CaiBackend() as backend:
+                await backend.initialize()
+
+                # 1. 已初始化 → 绿色提示
+                if backend.steam_path and (backend.steam_path / 'opensteamtool.toml').exists():
+                    return {"already": True}
+
+                # 2. 定位 Steam 目录：后端回退链 → 弹窗选择
+                steam_path = backend.get_steam_path_with_fallback()
+                if not steam_path:
+                    return {"need_pick": True}
+                backend.steam_path = steam_path
+
+                # 3. Steam 运行中 → 提示手动关闭
+                if backend.is_steam_running():
+                    return {"running": True}
+
+                # 4. 下载安装
+                result = await backend.install_opensteamtool(steam_path)
+                return result
+
+        _replace_worker(getattr(self, 'init_ost_worker', None))
+        self.init_ost_worker = AsyncWorker(_init())
+        self.init_ost_worker.result_ready.connect(self._on_init_ost_result)
+        self.init_ost_worker.error.connect(self._on_init_ost_error)
+        self.init_ost_worker.finished.connect(self.init_ost_worker.deleteLater)
+        self.init_ost_worker.start()
+
+        InfoBar.info(
+            title=tr("init_ost"),
+            content=tr("init_ost_installing"),
+            parent=self.window(),
+            position=InfoBarPosition.TOP
+        )
+
+    @pyqtSlot(object)
+    def _on_init_ost_result(self, result):
+        """初始化结果处理"""
+        if result.get('already'):
+            InfoBar.success(
+                title=tr("init_ost"),
+                content=tr("init_ost_done"),
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+            self.init_ost_btn.setEnabled(True)
+            return
+
+        if result.get('need_pick'):
+            # 弹窗让用户选 Steam 目录
+            picked = QFileDialog.getExistingDirectory(
+                self.window(), tr("init_ost_pick_dir")
+            )
+            if picked:
+                # 写入配置
+                try:
+                    import json as _json
+                    cfg_path = APP_ROOT / 'config' / 'config.json'
+                    if cfg_path.exists():
+                        cfg = _json.loads(cfg_path.read_text(encoding='utf-8'))
+                    else:
+                        from backend.cai_backend import DEFAULT_CONFIG
+                        cfg = DEFAULT_CONFIG.copy()
+                    cfg['Custom_Steam_Path'] = picked
+                    cfg_path.write_text(_json.dumps(cfg, indent=2, ensure_ascii=False), encoding='utf-8')
+                except Exception:
+                    pass
+                self._do_init_ost()
+                return
+            InfoBar.error(
+                title=tr("init_ost_failed"),
+                content=tr("init_ost_no_path"),
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=4000
+            )
+            self.init_ost_btn.setEnabled(True)
+            return
+
+        if result.get('running'):
+            box = MessageBox(tr("init_ost"), tr("init_ost_running"), self.window())
+            box.yesButton.setText(tr("init_ost_retry"))
+            box.cancelButton.setText(tr("cancel"))
+            if box.exec():
+                self._do_init_ost()
+            else:
+                self.init_ost_btn.setEnabled(True)
+            return
+
+        if result.get('success'):
+            InfoBar.success(
+                title=tr("init_ost"),
+                content=tr("init_ost_success").format(result.get('version', '')),
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+        else:
+            InfoBar.error(
+                title=tr("init_ost_failed"),
+                content=result.get('message', tr("unknown_error")),
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=4000
+            )
+        self.init_ost_btn.setEnabled(True)
+
+    @pyqtSlot(str)
+    def _on_init_ost_error(self, error):
+        """初始化失败"""
+        InfoBar.error(
+            title=tr("init_ost_failed"),
+            content=error,
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=4000
+        )
+        self.init_ost_btn.setEnabled(True)
 
     def on_launch_steam_clicked(self):
         """启动 Steam"""
@@ -3465,7 +3604,7 @@ class HomePage(ScrollArea):
             for game in gl_games:
                 self.all_games_data.append(('gl', game))
             for game in ost_games:
-                self.all_games_data.append(('st', game))
+                self.all_games_data.append(('ost', game))
 
             # 合并已入库记录：扫描缺失的 appid 用记录补充（已有的保留扫描数据）
             seen = {str(g.get('appid', '')) for _, g in self.all_games_data}
@@ -3655,7 +3794,7 @@ class HomePage(ScrollArea):
                     # 构造删除项
                     items = [{
                         'appid': appid,
-                        'filename': f'{appid}.lua' if source_type == 'st' else f'{appid}.txt'
+                        'filename': f'{appid}.lua' if source_type in ('st', 'ost') else f'{appid}.txt'
                     }]
                     
                     result = backend.delete_managed_files(source_type, items)
@@ -3708,12 +3847,12 @@ class HomePage(ScrollArea):
             position=InfoBarPosition.TOP
         )
 
-    def toggle_st_version(self, filename, appid):
+    def toggle_st_version(self, filename, appid, source_type="st"):
         """切换ST文件版本模式（自动更新/固定版本）"""
         async def _toggle():
             async with CaiBackend() as backend:
                 await backend.initialize()
-                result = await backend.toggle_st_version(filename)
+                result = await backend.toggle_st_version(filename, source_type)
                 return result
         
         _replace_worker(getattr(self, 'toggle_worker', None))
@@ -3742,7 +3881,7 @@ class HomePage(ScrollArea):
             )
             # 更新对应卡片的版本模式标签
             for card in self.game_cards:
-                if hasattr(card, 'appid') and card.appid == appid and hasattr(card, 'source_type') and card.source_type == 'st':
+                if hasattr(card, 'appid') and card.appid == appid and hasattr(card, 'source_type') and card.source_type in ('st', 'ost'):
                     # 从消息中判断新的模式
                     message = result.get('message', '')
                     is_fixed = '固定版本' in message
@@ -5959,7 +6098,7 @@ class SearchPage(ScrollArea):
         
         InfoBar.error(
             title=tr("delete_failed"),
-            content=tr("check_details"),
+            content=error_msg,
             parent=self.window(),
             position=InfoBarPosition.TOP,
             duration=5000
@@ -8712,6 +8851,32 @@ class MainWindow(MSFluentWindow):
 
         # 延迟自动检查更新（可在设置中关闭）
         QTimer.singleShot(3000, self._auto_check_update)
+
+    def closeEvent(self, event):
+        """窗口关闭：统一停止所有后台 worker 线程，避免 PyInstaller 退出时
+        _MEI 临时目录因 DLL/文件被占用而清理失败。"""
+        for page in (self.home_page, self.search_page, self.launcher_page,
+                     self.trainer_page, self.gbe_page, self.settings_page):
+            for attr in ('worker', '_name_worker', 'init_ost_worker',
+                         'launch_steam_worker', 'clear_worker', 'delete_worker',
+                         'toggle_worker', 'restart_steam_worker', 'search_worker',
+                         'unlock_worker', '_manifest_worker', '_rec_worker',
+                         '_auto_update_worker', '_search_worker', '_download_worker',
+                         '_update_worker', '_log_worker'):
+                try:
+                    w = getattr(page, attr, None)
+                    if w is None:
+                        continue
+                    if hasattr(w, 'isRunning') and w.isRunning():
+                        if hasattr(w, 'cancel'):
+                            w.cancel()
+                        elif hasattr(w, 'stop'):
+                            w.stop()
+                        w.wait(2000)
+                    w.deleteLater()
+                except Exception:
+                    pass
+        super().closeEvent(event)
 
     def _center_window(self):
         """窗口居中显示（主屏）"""

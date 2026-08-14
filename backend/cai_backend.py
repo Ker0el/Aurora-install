@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.6"  # 当前版本号
+CURRENT_VERSION = "1.7"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -586,7 +586,167 @@ class CaiBackend:
         except Exception:
             self.log.error(f'获取Steam路径失败。请检查Steam是否正确安装，或在config.json中设置Custom_Steam_Path。')
             return None
-            
+
+    def find_steam_path_via_desktop(self) -> Path | None:
+        """扫描桌面/OneDrive桌面的 Steam.lnk 快捷方式，解析出 Steam 安装目录。"""
+        try:
+            for base in [Path(os.environ.get('USERPROFILE', '')) / 'Desktop',
+                         Path(os.environ.get('USERPROFILE', '')) / 'OneDrive' / 'Desktop',
+                         Path(os.environ.get('PUBLIC', r'C:\Users\Public')) / 'Desktop']:
+                if not base.exists():
+                    continue
+                for lnk in sorted(base.glob('*.lnk')):
+                    if 'steam' not in lnk.name.lower():
+                        continue
+                    try:
+                        # 用 PowerShell 的 WScript.Shell COM 解析 .lnk 目标路径（最可靠）
+                        cmd = ('$sh = New-Object -ComObject WScript.Shell; '
+                               f'$s = $sh.CreateShortcut("{lnk}"); '
+                               'Write-Output $s.TargetPath')
+                        result = subprocess.run(
+                            ["powershell", "-NoProfile", "-Command", cmd],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        target = (result.stdout or '').strip()
+                        if not target or not target.lower().endswith('steam.exe'):
+                            continue
+                        sp = Path(target).parent
+                        if (sp / 'steam.exe').exists():
+                            self.log.info(f"通过桌面快捷方式找到 Steam 路径: {sp}")
+                            return sp
+                    except Exception:
+                        continue
+        except Exception as e:
+            self.log.warning(f"扫描桌面快捷方式失败: {e}")
+        return None
+
+    def get_steam_path_with_fallback(self) -> Path | None:
+        """按 注册表/配置 → 桌面快捷方式 → None 顺序查找 Steam 路径。"""
+        p = self.get_steam_path()
+        if p and p.exists():
+            return p
+        p = self.find_steam_path_via_desktop()
+        if p and p.exists():
+            return p
+        return None
+
+    def is_steam_running(self) -> bool:
+        """检查 steam.exe 进程是否在运行。"""
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq steam.exe"],
+                capture_output=True, text=True, timeout=10
+            )
+            return "steam.exe" in result.stdout.lower()
+        except Exception:
+            return False
+
+    async def fetch_ost_latest_release(self) -> Dict:
+        """获取 OpenSteamTool 最新 release 信息（支持 gh-proxy 镜像）。
+        返回 {'version': tag, 'asset_url': 下载地址, 'asset_name': 文件名}，失败返回 {}"""
+        repo = "OpenSteam001/OpenSteamTool"
+        urls = [f"https://api.github.com/repos/{repo}/releases/latest"]
+        try:
+            if await self.checkcn():
+                urls = [f"https://gh-proxy.org/https://api.github.com/repos/{repo}/releases/latest",
+                        f"https://cdn.gh-proxy.org/https://api.github.com/repos/{repo}/releases/latest",
+                        f"https://edgeone.gh-proxy.org/https://api.github.com/repos/{repo}/releases/latest",
+                        f"https://ghp.ci/https://api.github.com/repos/{repo}/releases/latest"] + urls
+        except Exception:
+            pass
+        headers = {'User-Agent': 'Aurora-Install-OST'}
+        for url in urls:
+            try:
+                r = await self.client.get(url, headers=headers, timeout=10, follow_redirects=True)
+                if r.status_code == 200:
+                    data = r.json()
+                    tag = str(data.get('tag_name', '')).strip().lstrip('v')
+                    for a in data.get('assets', []):
+                        name = a.get('name', '')
+                        if name.endswith('Release.zip'):
+                            return {'version': tag, 'asset_name': name,
+                                    'asset_url': a.get('browser_download_url', '')}
+                    return {}
+            except Exception as e:
+                self.log.warning(f"获取 OpenSteamTool release 失败 ({url.split('/')[2]}): {e}")
+                continue
+        return {}
+
+    async def download_ost_zip(self, asset_url: str, dest: Path) -> bool:
+        """下载 OpenSteamTool 压缩包到 dest（支持镜像重试），返回是否成功。"""
+        repo = "OpenSteam001/OpenSteamTool"
+        urls = [asset_url]
+        try:
+            if await self.checkcn():
+                urls = [f"https://gh-proxy.org/{asset_url}",
+                        f"https://cdn.gh-proxy.org/{asset_url}",
+                        f"https://edgeone.gh-proxy.org/{asset_url}",
+                        f"https://ghp.ci/{asset_url}"] + urls
+        except Exception:
+            pass
+        for url in urls:
+            try:
+                async with self.client.stream("GET", url, timeout=120, follow_redirects=True) as r:
+                    if r.status_code != 200:
+                        continue
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with open(dest, 'wb') as f:
+                        async for chunk in r.aiter_bytes(64 * 1024):
+                            f.write(chunk)
+                    if dest.exists() and dest.stat().st_size > 0:
+                        self.log.info(f"OpenSteamTool 压缩包下载成功: {dest}")
+                        return True
+            except Exception as e:
+                self.log.warning(f"下载 OpenSteamTool 失败 ({url.split('/')[2]}): {e}")
+                continue
+        return False
+
+    async def install_opensteamtool(self, steam_path: Path) -> Dict:
+        """初始化 OpenSteamTool：
+        1. 已存在 opensteamtool.toml → 返回 already=True，不重复下载
+        2. 下载最新 Release zip 解压到 Steam 根目录
+        3. 写 opensteamtool.toml
+        """
+        steam_path = Path(steam_path)
+        toml_path = steam_path / 'opensteamtool.toml'
+        if toml_path.exists():
+            self.log.info("opensteamtool.toml 已存在，跳过初始化下载")
+            return {"success": True, "already": True}
+
+        release = await self.fetch_ost_latest_release()
+        if not release:
+            return {"success": False, "message": "获取 OpenSteamTool 最新版本信息失败"}
+
+        import tempfile
+        tmp_dir = Path(tempfile.mkdtemp(prefix='ost_'))
+        try:
+            zip_path = tmp_dir / release['asset_name']
+            if not await self.download_ost_zip(release['asset_url'], zip_path):
+                return {"success": False, "message": "下载 OpenSteamTool 压缩包失败（请检查网络）"}
+
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    names = zf.namelist()
+                    # 若 zip 顶层只有一个目录，剥离该层
+                    top = Path(names[0]).parts[0] if names else ''
+                    strip_top = all(Path(n).parts[0] == top for n in names if n)
+                    for n in names:
+                        if n.endswith('/'):
+                            continue
+                        target = Path(n).relative_to(top) if strip_top and top else Path(n)
+                        out = steam_path / target
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(n) as src, open(out, 'wb') as dst:
+                            shutil.copyfileobj(src, dst)
+            except Exception as e:
+                return {"success": False, "message": f"解压失败: {e}"}
+
+            toml_path.write_text('[manifest]\n\nurl = "wurm"\n', encoding='utf-8')
+            self.log.info(f"OpenSteamTool 初始化完成，版本 {release['version']}")
+            return {"success": True, "already": False, "version": release['version']}
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     # --- NEW: File Manager Methods ---
 
     async def _fetch_game_name_for_manager(self, appid: str, lang: str = "schinese") -> str:
@@ -951,14 +1111,15 @@ class CaiBackend:
         """删除 backup 目录中与条目对应的备份文件，避免刷新时自动恢复。"""
         removed = 0
         backup_root = self.project_root / 'backup'
-        backup_dir = backup_root / ('stplug-in' if file_type == 'st' else 'AppList')
+        backup_dir = backup_root / ('stplug-in' if file_type in ('st', 'ost') else 'AppList')
         if not backup_dir.exists():
             return 0
         candidates = set()
         if filename:
             candidates.add(filename)
         if appid and str(appid).isdigit():
-            candidates.add(f"{appid}.lua" if file_type == 'st' else f"{appid}.txt")
+            candidates.add(f"{appid}.lua")
+            candidates.add(f"{appid}.txt")
         for candidate in candidates:
             try:
                 path = backup_dir / candidate
@@ -979,6 +1140,8 @@ class CaiBackend:
             base_path = self.steam_path / 'config' / 'stplug-in'
         elif file_type == 'gl':
             base_path = self.steam_path / 'AppList'
+        elif file_type == 'ost':
+            base_path = self.steam_path / 'config' / 'lua'
         
         if not base_path:
             return {"success": False, "message": f"未知的类型: {file_type}。"}
@@ -990,7 +1153,7 @@ class CaiBackend:
         for item in items:
             try:
                 # 步骤1: 如果是ST类型，清理 steamtools.lua 中的解锁条目
-                if file_type == 'st' and item.get('status') != 'core_file' and item.get('appid', 'N/A').isdigit():
+                if file_type in ('st', 'ost') and item.get('status') != 'core_file' and item.get('appid', 'N/A').isdigit():
                     self._modify_st_lua_for_delete(item['appid'])
 
                 # 步骤2: 清理物理文件和关联的 manifest
@@ -999,7 +1162,7 @@ class CaiBackend:
                 if filename and "缺少" not in filename:
                     file_path = base_path / filename
                     if file_path.exists() and file_path.is_file():
-                        if file_type == 'st' and filename.endswith('.lua'):
+                        if file_type in ('st', 'ost') and filename.endswith('.lua'):
                             try:
                                 content = file_path.read_text(encoding='utf-8', errors='ignore')
                                 gids = re.findall(r'setManifestid\s*\(\s*\d+\s*,\s*"(\d+)"\s*\)', content)
@@ -1042,12 +1205,13 @@ class CaiBackend:
         
         return {"success": not failed, "message": message}
 
-    async def toggle_st_version(self, filename: str) -> Dict:
+    async def toggle_st_version(self, filename: str, file_type: str = "st") -> Dict:
         """切换ST文件版本模式（自动更新/固定版本）"""
         if not self.steam_path:
             return {"success": False, "message": "Steam路径未设置"}
-        
-        file_path = self.steam_path / 'config' / 'stplug-in' / filename
+
+        base_path = self.steam_path / 'config' / 'stplug-in' if file_type != 'ost' else self.steam_path / 'config' / 'lua'
+        file_path = base_path / filename
         if not file_path.exists():
             return {"success": False, "message": "文件不存在"}
 

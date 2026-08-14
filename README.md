@@ -18,9 +18,11 @@
 
 - **Fluent Design 界面** — Windows 11 风格现代化 UI，支持深色 / 浅色主题与自定义主题色
 - **多语言** — 中文、English、Français、Русский、Deutsch、日本語、繁體中文
+- **OpenSteamTool 一键初始化** — 主页「初始化」按钮自动从 GitHub 下载安装 OpenSteamTool 内核并生成配置，开箱即用
 - **多清单源** — 内置 SWA V2、Cysaw、Walftech、Sudama、MHub、GitHub 仓库等多种清单源，自动调度
 - **入库去重** — 重复入库自动拦截，智能识别已拥有游戏（含 DLC）
 - **批量入库** — 多选游戏一键排队入库，实时进度反馈
+- **一键删除** — 主页删除游戏自动清理解锁文件、清单文件与备份（支持 SteamTools / OpenSteamTools / GreenLuma）
 - **联机模式** — 内置联机核心服务，支持游戏联机启动
 - **修改器下载** — 内置修改器搜索与下载，支持 ZIP / RAR / 7z 自动解压
 - **本地备份与恢复** — 一键备份 / 还原入库数据与清单文件
@@ -53,9 +55,11 @@ python main.py
 ## 📖 使用
 
 1. 打开 Steam 客户端并登录
-2. 启动 Aurora Install，自动检测 Steam 路径与解锁器（SteamTools / GreenLuma）
-3. 在「搜索」页搜索游戏 → 点击入库（或勾选多个游戏批量入库）
-4. 回 Steam 即可看到游戏出现在库中，开始下载游玩
+2. 启动 Aurora Install，自动检测 Steam 路径与解锁器（SteamTools / OpenSteamTools / GreenLuma）
+3. 若未检测到 OpenSteamTool，在「主页」点击「初始化」，自动下载安装 OpenSteamTool 内核（安装前请先关闭 Steam）
+4. 在「搜索」页搜索游戏 → 点击入库（或勾选多个游戏批量入库）
+5. 回 Steam 即可看到游戏出现在库中，开始下载游玩
+6. 删除游戏：主页卡片「更多」→「删除」，自动清理解锁文件、清单与备份
 
 更多细节见各页面内提示与设置面板。
 

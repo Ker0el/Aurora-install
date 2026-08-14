@@ -18,9 +18,11 @@ Clean · Efficient · Multi-manifest-source
 
 - **Fluent Design UI** — Windows 11 style modern interface with dark / light themes and custom accent colors
 - **Multi-language** — 简体中文, English, Français, Русский, Deutsch, 日本語, 繁體中文
+- **One-click OpenSteamTool setup** — The "Initialize" button on the Home page downloads and installs the OpenSteamTool core from GitHub and generates its config, ready to use out of the box
 - **Multiple manifest sources** — SWA V2, Cysaw, Walftech, Sudama, MHub, GitHub repositories and more, with automatic fallback
 - **Duplicate protection** — Automatically skips games already in your library (including DLCs)
 - **Batch install** — Select multiple games and queue them for installation with live progress
+- **One-click removal** — Delete a game from the Home page; unlock files, manifests and backups are cleaned up automatically (SteamTools / OpenSteamTools / GreenLuma)
 - **Online co-op mode** — Built-in launch service for online games
 - **Trainer downloader** — Search and download trainers, with automatic ZIP / RAR / 7z extraction
 - **Backup & restore** — One-click backup / restore of your library data and manifest files
@@ -53,9 +55,11 @@ python main.py
 ## 📖 Usage
 
 1. Open the Steam client and sign in
-2. Launch Aurora Install — it auto-detects your Steam path and unlocker (SteamTools / GreenLuma)
-3. Search for a game on the **Search** page → click install (or select multiple games for batch install)
-4. Back in Steam, the game appears in your library — download and play
+2. Launch Aurora Install — it auto-detects your Steam path and unlocker (SteamTools / OpenSteamTools / GreenLuma)
+3. If OpenSteamTool is not detected, click **Initialize** on the Home page to download and install the OpenSteamTool core automatically (close Steam first)
+4. Search for a game on the **Search** page → click install (or select multiple games for batch install)
+5. Back in Steam, the game appears in your library — download and play
+6. To remove a game: Home page card → "More" → "Delete" — unlock files, manifests and backups are cleaned up automatically
 
 See in-app hints and the Settings panel for more details.
 
