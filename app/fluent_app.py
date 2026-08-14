@@ -1865,6 +1865,18 @@ _NEW_FEATURE_TEXTS = {
         "clear_success": "已清空",
         "clear_failed": "清空失败",
         "launch_steam": "启动 Steam",
+        "gbe_launch": "免 Steam 启动",
+        "gbe_restore": "还原 GBE",
+        "gbe_pick_dir": "选择游戏目录（含 steam_api*.dll）",
+        "gbe_not_steamworks": "未检测到 Steamworks 接口",
+        "gbe_no_api": "游戏目录没有 steam_api*.dll，无法应用 GBE",
+        "gbe_apply_failed": "GBE 应用失败",
+        "gbe_applied": "GBE 已应用",
+        "gbe_launch_confirm": "GBE 已配置完成，现在启动游戏？",
+        "gbe_launch_failed": "启动失败",
+        "gbe_appid_hint": "输入游戏 AppID（如 105600）：",
+        "gbe_restored": "已还原原版 dll",
+        "gbe_restore_failed": "还原失败",
         "steam_running": "Steam 已在运行",
         "steam_launched": "Steam 已启动",
         "steam_launch_failed": "启动 Steam 失败",
@@ -1908,6 +1920,18 @@ _NEW_FEATURE_TEXTS = {
         "clear_success": "Cleared",
         "clear_failed": "Clear failed",
         "launch_steam": "Launch Steam",
+        "gbe_launch": "Launch without Steam",
+        "gbe_restore": "Restore GBE",
+        "gbe_pick_dir": "Select game folder (with steam_api*.dll)",
+        "gbe_not_steamworks": "No Steamworks API detected",
+        "gbe_no_api": "No steam_api*.dll found, cannot apply GBE",
+        "gbe_apply_failed": "GBE apply failed",
+        "gbe_applied": "GBE applied",
+        "gbe_launch_confirm": "GBE configured, launch the game now?",
+        "gbe_launch_failed": "Launch failed",
+        "gbe_appid_hint": "Enter game AppID (e.g. 105600):",
+        "gbe_restored": "Original DLL restored",
+        "gbe_restore_failed": "Restore failed",
         "steam_running": "Steam is already running",
         "steam_launched": "Steam launched",
         "steam_launch_failed": "Failed to launch Steam",
@@ -2974,6 +2998,12 @@ class HomePage(ScrollArea):
         self.launch_steam_btn.setFixedHeight(32)
         self.launch_steam_btn.clicked.connect(self.on_launch_steam_clicked)
 
+        # 免 Steam 启动按钮（GBE）
+        self.gbe_launch_btn = PushButton(tr("gbe_launch"), self)
+        self.gbe_launch_btn.setIcon(FluentIcon.PLAY)
+        self.gbe_launch_btn.setFixedHeight(32)
+        self.gbe_launch_btn.clicked.connect(self.on_gbe_launch_clicked)
+
         # 清空已入库按钮
         self.clear_installed_btn = PushButton(tr("clear_installed"), self)
         self.clear_installed_btn.setIcon(FluentIcon.DELETE)
@@ -2984,6 +3014,7 @@ class HomePage(ScrollArea):
         header_layout.addStretch(1)
         header_layout.addWidget(self.stats_label)
         header_layout.addWidget(self.launch_steam_btn)
+        header_layout.addWidget(self.gbe_launch_btn)
         header_layout.addWidget(self.clear_installed_btn)
         header_layout.addWidget(self.refresh_button)
         self.mainLayout.addLayout(header_layout)
@@ -3213,6 +3244,91 @@ class HomePage(ScrollArea):
             parent=self.window(),
             position=InfoBarPosition.TOP
         )
+
+    def on_gbe_launch_clicked(self):
+        """免 Steam 启动（GBE）：选游戏目录 → 应用模拟层 → 启动"""
+        from backend.gbe_backend import apply_gbe, restore_gbe, launch_game, detect_steam_api
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+        game_dir = QFileDialog.getExistingDirectory(self.window(), tr("gbe_pick_dir"))
+        if not game_dir:
+            return
+        game_dir = Path(game_dir)
+
+        detect = detect_steam_api(game_dir)
+        if not detect:
+            InfoBar.warning(
+                title=tr("gbe_not_steamworks"),
+                content=tr("gbe_no_api"),
+                parent=self.window(),
+                position=InfoBarPosition.TOP
+            )
+            return
+
+        # 应用 GBE（同步操作小，直接跑）
+        result = apply_gbe(game_dir, self._gbe_prompt_appid())
+        if not result["success"]:
+            InfoBar.error(
+                title=tr("gbe_apply_failed"),
+                content=result["message"],
+                parent=self.window(),
+                position=InfoBarPosition.TOP
+            )
+            return
+        InfoBar.success(
+            title=tr("gbe_applied"),
+            content=result["message"],
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=3000
+        )
+
+        # 询问是否启动
+        box = QMessageBox(self.window())
+        box.setWindowTitle(tr("gbe_launch"))
+        box.setText(tr("gbe_launch_confirm"))
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            launch_result = launch_game(game_dir)
+            if not launch_result["success"]:
+                InfoBar.warning(
+                    title=tr("gbe_launch_failed"),
+                    content=launch_result["message"],
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP
+                )
+
+    def _gbe_prompt_appid(self) -> str:
+        """弹窗让用户输入游戏 AppID（GBE 需要）"""
+        from PyQt6.QtWidgets import QInputDialog
+        appid, ok = QInputDialog.getText(self.window(), tr("gbe_launch"), tr("gbe_appid_hint"))
+        if not ok or not appid.strip().isdigit():
+            return "480"
+        return appid.strip()
+
+    def on_gbe_restore_clicked(self):
+        """还原 GBE（恢复原 dll）"""
+        from backend.gbe_backend import restore_gbe
+        from PyQt6.QtWidgets import QFileDialog
+
+        game_dir = QFileDialog.getExistingDirectory(self.window(), tr("gbe_pick_dir"))
+        if not game_dir:
+            return
+        result = restore_gbe(Path(game_dir))
+        if result["success"]:
+            InfoBar.success(
+                title=tr("gbe_restored"),
+                content=result["message"],
+                parent=self.window(),
+                position=InfoBarPosition.TOP
+            )
+        else:
+            InfoBar.warning(
+                title=tr("gbe_restore_failed"),
+                content=result["message"],
+                parent=self.window(),
+                position=InfoBarPosition.TOP
+            )
 
     def on_clear_installed_clicked(self):
         """清空已入库"""
