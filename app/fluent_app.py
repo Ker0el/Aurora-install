@@ -8619,7 +8619,7 @@ class MainWindow(MSFluentWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(tr("app_title") + f"  v{CURRENT_VERSION}")
-        self.resize(1000, 700)
+        self.resize(1600, 900)
 
         # 设置窗口图标为Fluent内置的下载图标
         self.setWindowIcon(FluentIcon.CLOUD_DOWNLOAD.icon())
@@ -8670,21 +8670,20 @@ class MainWindow(MSFluentWindow):
             tr("gbe_nav")
         )
 
-        # 在导航栏底部添加设置
-        self.addSubInterface(
-            self.settings_page,
-            FluentIcon.SETTING,
-            tr("settings"),
-            position=NavigationItemPosition.BOTTOM
-        )
-
-        # 在导航栏底部添加赞助（免 Steam 下方、重启 Steam 上方）
+        # 赞助（免Steam栏目正下方，导航主体区）
         self.navigationInterface.addItem(
             routeKey="sponsor",
             icon=FluentIcon.HEART,
             text=tr("sponsor_nav"),
             onClick=self._show_sponsor,
-            selectable=False,
+            selectable=False
+        )
+
+        # 在导航栏底部添加设置
+        self.addSubInterface(
+            self.settings_page,
+            FluentIcon.SETTING,
+            tr("settings"),
             position=NavigationItemPosition.BOTTOM
         )
 
