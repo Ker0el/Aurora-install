@@ -8,6 +8,8 @@
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-4B8BBE) ![License](https://img.shields.io/badge/License-MIT-green) ![Platform](https://img.shields.io/badge/Windows-11%20%2F%2010-0078D6)
 
+**简体中文** | [English](./README_EN.md)
+
 </div>
 
 ---
