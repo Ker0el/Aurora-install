@@ -4,3 +4,4 @@ tests/__pycache__/
 dist/
 build/
 logs/
+config/name_cache.json
