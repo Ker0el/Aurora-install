@@ -1877,6 +1877,29 @@ _NEW_FEATURE_TEXTS = {
         "gbe_appid_hint": "输入游戏 AppID（如 105600）：",
         "gbe_restored": "已还原原版 dll",
         "gbe_restore_failed": "还原失败",
+        "gbe_nav": "免Steam",
+        "gbe_title": "免 Steam 启动",
+        "gbe_step1": "步骤1：选择游戏目录",
+        "gbe_step2": "步骤2：Goldberg 模拟器配置",
+        "gbe_step3": "步骤3：启动游戏",
+        "gbe_browse": "浏览",
+        "gbe_game_dir": "游戏目录",
+        "gbe_game_dir_hint": "选择含 steam_api*.dll 的游戏根目录",
+        "gbe_dir_placeholder": "如 D:/SteamLibrary/steamapps/common/Terraria",
+        "gbe_appid_detect_pending": "等待检测",
+        "gbe_appid_detected": "已自动检测到 AppID",
+        "gbe_appid_not_detected": "未检测到，请手动输入",
+        "gbe_appid_hint2": "自动检测或手动输入游戏 AppID",
+        "gbe_apply": "应用 GBE",
+        "gbe_emu_tip": "完整模式：dll + steam_appid.txt + steam_settings 配置目录",
+        "gbe_lite_tip": "轻量模式：只替换 dll + steam_appid.txt",
+        "gbe_mode_hint": "选择 Goldberg 模拟器模式后自动应用",
+        "gbe_restore_group": "还原",
+        "gbe_restore_hint": "恢复游戏目录的原版 steam_api dll",
+        "gbe_launch_now": "启动游戏",
+        "gbe_need_dir": "请先选择游戏目录",
+        "gbe_need_appid": "请输入有效的 AppID（纯数字）",
+        "gbe_launch_after_apply": "GBE 配置完成后点击启动",
         "steam_running": "Steam 已在运行",
         "steam_launched": "Steam 已启动",
         "steam_launch_failed": "启动 Steam 失败",
@@ -1932,6 +1955,29 @@ _NEW_FEATURE_TEXTS = {
         "gbe_appid_hint": "Enter game AppID (e.g. 105600):",
         "gbe_restored": "Original DLL restored",
         "gbe_restore_failed": "Restore failed",
+        "gbe_nav": "No Steam",
+        "gbe_title": "Launch without Steam",
+        "gbe_step1": "Step 1: Select game folder",
+        "gbe_step2": "Step 2: Goldberg Emulator config",
+        "gbe_step3": "Step 3: Launch game",
+        "gbe_browse": "Browse",
+        "gbe_game_dir": "Game folder",
+        "gbe_game_dir_hint": "Select game root folder containing steam_api*.dll",
+        "gbe_dir_placeholder": "e.g. D:/SteamLibrary/steamapps/common/Terraria",
+        "gbe_appid_detect_pending": "Waiting for detection",
+        "gbe_appid_detected": "AppID auto-detected",
+        "gbe_appid_not_detected": "Not detected, enter manually",
+        "gbe_appid_hint2": "Auto-detect or manually enter game AppID",
+        "gbe_apply": "应用 GBE",
+        "gbe_emu_tip": "Full mode: dll + steam_appid.txt + steam_settings config folder",
+        "gbe_lite_tip": "Lite mode: only dll + steam_appid.txt",
+        "gbe_mode_hint": "Choose Goldberg emulator mode to apply",
+        "gbe_restore_group": "Restore",
+        "gbe_restore_hint": "Restore original steam_api dll in game folder",
+        "gbe_launch_now": "Launch Game",
+        "gbe_need_dir": "Please select a game folder first",
+        "gbe_need_appid": "Please enter a valid AppID (digits only)",
+        "gbe_launch_after_apply": "Click launch after GBE is configured",
         "steam_running": "Steam is already running",
         "steam_launched": "Steam launched",
         "steam_launch_failed": "Failed to launch Steam",
@@ -6881,6 +6927,193 @@ class TrainerPage(ScrollArea):
 
 
 
+# ============================================================
+# 免 Steam 启动页面（GBE）
+# ============================================================
+class GbePage(ScrollArea):
+    """免 Steam 启动：选择游戏目录 → 选择 GBE 模式 → 配置并启动"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("gbePage")
+        self.setWidgetResizable(True)
+
+        container = QWidget()
+        container.setObjectName("gbeContainer")
+        self.setWidget(container)
+        self.setStyleSheet("GbePage { background: transparent; }")
+        container.setStyleSheet("QWidget#gbeContainer { background: transparent; }")
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(16)
+
+        # 标题
+        title = SubtitleLabel(tr("gbe_title"), self)
+        layout.addWidget(title)
+
+        # 步骤1：选择游戏目录
+        step1_card = GroupHeaderCardWidget(self)
+        step1_card.setTitle(tr("gbe_step1"))
+        step1_card.setBorderRadius(8)
+
+        self.dir_edit = LineEdit()
+        self.dir_edit.setPlaceholderText(tr("gbe_dir_placeholder"))
+        self.dir_edit.setFixedWidth(420)
+        self.dir_edit.textChanged.connect(self._on_dir_changed)
+
+        browse_btn = PushButton(tr("gbe_browse"))
+        browse_btn.setFixedWidth(90)
+        browse_btn.clicked.connect(self._browse_dir)
+
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(self.dir_edit)
+        dir_row.addWidget(browse_btn)
+        dir_row.addStretch(1)
+        dir_wrap = QWidget()
+        dir_wrap.setLayout(dir_row)
+        step1_card.addGroup(FluentIcon.FOLDER, tr("gbe_game_dir"), tr("gbe_game_dir_hint"), dir_wrap)
+
+        # AppID 自动检测 + 手动输入
+        self.appid_edit = LineEdit()
+        self.appid_edit.setPlaceholderText(tr("gbe_appid_hint"))
+        self.appid_edit.setFixedWidth(160)
+        self.appid_status = BodyLabel(tr("gbe_appid_detect_pending"))
+        self.appid_status.setTextColor("#909399", "#b0b3b8")
+
+        appid_row = QHBoxLayout()
+        appid_row.addWidget(self.appid_edit)
+        appid_row.addWidget(self.appid_status)
+        appid_row.addStretch(1)
+        appid_wrap = QWidget()
+        appid_wrap.setLayout(appid_row)
+        step1_card.addGroup(FluentIcon.ROBOT, tr("gbe_appid"), tr("gbe_appid_hint2"), appid_wrap)
+        layout.addWidget(step1_card)
+
+        # 步骤2：Goldberg 模拟器配置（默认 GBE Emu 完整模式）
+        step2_card = GroupHeaderCardWidget(self)
+        step2_card.setTitle(tr("gbe_step2"))
+        step2_card.setBorderRadius(8)
+
+        self.apply_btn = PrimaryPushButton(tr("gbe_apply"))
+        self.apply_btn.setFixedWidth(140)
+        self.apply_btn.clicked.connect(lambda: self._apply_mode("emu"))
+        self.apply_btn.setToolTip(tr("gbe_emu_tip"))
+
+        self.restore_btn = PushButton(tr("gbe_restore"))
+        self.restore_btn.setFixedWidth(140)
+        self.restore_btn.clicked.connect(self._restore)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.apply_btn)
+        mode_row.addWidget(self.restore_btn)
+        mode_row.addStretch(1)
+        mode_wrap = QWidget()
+        mode_wrap.setLayout(mode_row)
+        step2_card.addGroup(FluentIcon.SPEED_HIGH, tr("gbe_mode"), tr("gbe_mode_hint"), mode_wrap)
+
+        # 还原按钮
+        self.restore_btn = PushButton(tr("gbe_restore"))
+        self.restore_btn.setFixedWidth(140)
+        self.restore_btn.clicked.connect(self._restore)
+        restore_row = QHBoxLayout()
+        restore_row.addWidget(self.restore_btn)
+        restore_row.addStretch(1)
+        restore_wrap = QWidget()
+        restore_wrap.setLayout(restore_row)
+        step2_card.addGroup(FluentIcon.PLAY, tr("gbe_restore_group"), tr("gbe_restore_hint"), restore_wrap)
+        layout.addWidget(step2_card)
+
+        # 步骤3：启动
+        step3_card = GroupHeaderCardWidget(self)
+        step3_card.setTitle(tr("gbe_step3"))
+        step3_card.setBorderRadius(8)
+
+        self.launch_btn = PrimaryPushButton(tr("gbe_launch_now"))
+        self.launch_btn.setFixedWidth(160)
+        self.launch_btn.clicked.connect(self._launch)
+        launch_row = QHBoxLayout()
+        launch_row.addWidget(self.launch_btn)
+        launch_row.addStretch(1)
+        launch_wrap = QWidget()
+        launch_wrap.setLayout(launch_row)
+        step3_card.addGroup(FluentIcon.PLAY, tr("gbe_launch"), tr("gbe_launch_after_apply"), launch_wrap)
+        layout.addWidget(step3_card)
+
+        layout.addStretch(1)
+
+        self._last_dir = ""
+
+    def _browse_dir(self):
+        from PyQt6.QtWidgets import QFileDialog
+        d = QFileDialog.getExistingDirectory(self.window(), tr("gbe_pick_dir"))
+        if d:
+            self.dir_edit.setText(d)
+
+    def _on_dir_changed(self, text):
+        text = text.strip()
+        if not text:
+            self.appid_status.setText(tr("gbe_appid_detect_pending"))
+            return
+        from backend.gbe_backend import detect_appid
+        appid = detect_appid(Path(text))
+        if appid:
+            self.appid_edit.setText(appid)
+            self.appid_status.setText(tr("gbe_appid_detected"))
+        else:
+            self.appid_status.setText(tr("gbe_appid_not_detected"))
+
+    def _apply_mode(self, mode):
+        game_dir = self.dir_edit.text().strip()
+        appid = self.appid_edit.text().strip()
+        if not game_dir:
+            self._tip(tr("gbe_need_dir"), False)
+            return
+        if not appid.isdigit():
+            self._tip(tr("gbe_need_appid"), False)
+            return
+        from backend.gbe_backend import apply_gbe
+        result = apply_gbe(Path(game_dir), appid, mode)
+        if result["success"]:
+            self._tip(result["message"], True)
+        else:
+            self._tip(result["message"], False)
+
+    def _restore(self):
+        game_dir = self.dir_edit.text().strip()
+        if not game_dir:
+            self._tip(tr("gbe_need_dir"), False)
+            return
+        from backend.gbe_backend import restore_gbe
+        result = restore_gbe(Path(game_dir))
+        if result["success"]:
+            self._tip(result["message"], True)
+        else:
+            self._tip(result["message"], False)
+
+    def _launch(self):
+        game_dir = self.dir_edit.text().strip()
+        if not game_dir:
+            self._tip(tr("gbe_need_dir"), False)
+            return
+        from backend.gbe_backend import launch_game
+        result = launch_game(Path(game_dir))
+        if result["success"]:
+            self._tip(result["message"], True)
+        else:
+            self._tip(result["message"], False)
+
+    def _tip(self, msg, ok):
+        if ok:
+            InfoBar.success(title="GBE", content=msg, parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+        else:
+            InfoBar.warning(title="GBE", content=msg, parent=self.window(), position=InfoBarPosition.TOP)
+
+    def notify_theme_changed(self):
+        pass
+
+
+
 class SettingsPage(ScrollArea):
     """设置页面"""
     
@@ -8399,6 +8632,7 @@ class MainWindow(MSFluentWindow):
         self.search_page = SearchPage(self)
         self.launcher_page = LauncherPage(self)
         self.trainer_page = TrainerPage(self)
+        self.gbe_page = GbePage(self)
         self.settings_page = SettingsPage(self)
 
         # 添加导航项
@@ -8429,6 +8663,13 @@ class MainWindow(MSFluentWindow):
             tr("trainer_nav")
         )
 
+        # 添加免 Steam（修改器下方）
+        self.addSubInterface(
+            self.gbe_page,
+            FluentIcon.PLAY,
+            tr("gbe_nav")
+        )
+
         # 在导航栏底部添加设置
         self.addSubInterface(
             self.settings_page,
@@ -8436,23 +8677,23 @@ class MainWindow(MSFluentWindow):
             tr("settings"),
             position=NavigationItemPosition.BOTTOM
         )
-        
+
+        # 在导航栏底部添加赞助（免 Steam 下方、重启 Steam 上方）
+        self.navigationInterface.addItem(
+            routeKey="sponsor",
+            icon=FluentIcon.HEART,
+            text=tr("sponsor_nav"),
+            onClick=self._show_sponsor,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM
+        )
+
         # 在导航栏底部添加重启 Steam 按钮
         self.navigationInterface.addItem(
             routeKey="restart_steam",
             icon=FluentIcon.POWER_BUTTON,
             text=tr("restart_steam"),
             onClick=self.on_restart_steam,
-            selectable=False,
-            position=NavigationItemPosition.BOTTOM
-        )
-
-        # 在导航栏底部添加赞助入口
-        self.navigationInterface.addItem(
-            routeKey="sponsor",
-            icon=FluentIcon.HEART,
-            text=tr("sponsor_nav"),
-            onClick=self._show_sponsor,
             selectable=False,
             position=NavigationItemPosition.BOTTOM
         )

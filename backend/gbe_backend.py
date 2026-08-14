@@ -36,8 +36,54 @@ def detect_steam_api(game_dir: Path) -> Optional[Tuple[str, str]]:
     return None
 
 
-def apply_gbe(game_dir: Path, appid: str) -> dict:
-    """对游戏目录应用 GBE：备份原 dll → 复制模拟层 → 写 steam_appid.txt"""
+def detect_appid(game_dir: Path) -> Optional[str]:
+    """自动检测游戏 AppID：
+    1. 已有 steam_appid.txt 直接读
+    2. 扫描上级 steamapps/appmanifest_*.acf 匹配 installdir
+    3. 从游戏目录名在 installed_games 记录里匹配
+    返回 appid 字符串，找不到返回 None
+    """
+    # 1. 已有 steam_appid.txt
+    sa = game_dir / 'steam_appid.txt'
+    if sa.exists():
+        v = sa.read_text(encoding='utf-8').strip()
+        if v.isdigit():
+            return v
+
+    # 2. 扫描 steamapps/appmanifest_*.acf（game_dir 位于 steamapps/common/<game>）
+    steamapps = game_dir.parent.parent  # common → steamapps
+    for mf in steamapps.glob('appmanifest_*.acf'):
+        try:
+            txt = mf.read_text(encoding='utf-8', errors='ignore')
+            import re
+            m_appid = re.search(r'"appid"\s+"(\d+)"', txt)
+            m_dir = re.search(r'"installdir"\s+"([^"]+)"', txt)
+            if m_appid and m_dir and m_dir.group(1).lower() == game_dir.name.lower():
+                return m_appid.group(1)
+        except Exception:
+            continue
+
+    # 3. 记录匹配（installed_games.json）
+    try:
+        import json
+        rec_path = Path(__file__).resolve().parent.parent / 'config' / 'installed_games.json'
+        if rec_path.exists():
+            recs = json.loads(rec_path.read_text(encoding='utf-8'))
+            name = game_dir.name.lower()
+            for r in recs:
+                if str(r.get('name', '')).lower() == name and str(r.get('appid', '')).isdigit():
+                    return str(r['appid'])
+    except Exception:
+        pass
+
+    return None
+
+
+def apply_gbe(game_dir: Path, appid: str, mode: str = "emu") -> dict:
+    """对游戏目录应用 GBE。
+    mode="emu"：完整模式（dll + steam_appid.txt + steam_settings 配置目录）
+    mode="lite"：轻量模式（只 dll + steam_appid.txt，不建配置目录）
+    """
     try:
         if not game_dir.exists():
             return {"success": False, "message": "游戏目录不存在"}
@@ -61,7 +107,20 @@ def apply_gbe(game_dir: Path, appid: str) -> dict:
         # 3. 写 steam_appid.txt
         (game_dir / 'steam_appid.txt').write_text(str(appid), encoding='utf-8')
 
-        return {"success": True, "message": f"已应用 GBE（{bit}），原 dll 已备份为 {fname}.bak"}
+        # 4. 完整模式：创建 steam_settings 基本配置
+        if mode == "emu":
+            ss = game_dir / 'steam_settings'
+            ss.mkdir(exist_ok=True)
+            (ss / 'README.txt').write_text(
+                "Goldberg Emulator 配置目录\n"
+                "- account_name.txt: 玩家名\n"
+                "- user_steam_id.txt: SteamID（64位）\n"
+                "- configs/ 下放 DLC 解锁等配置\n",
+                encoding='utf-8'
+            )
+
+        mode_name = "完整模式" if mode == "emu" else "轻量模式"
+        return {"success": True, "message": f"已应用 GBE {mode_name}（{bit}），原 dll 已备份为 {fname}.bak"}
     except Exception as e:
         return {"success": False, "message": f"应用失败: {e}"}
 
