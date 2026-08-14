@@ -8619,7 +8619,7 @@ class MainWindow(MSFluentWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(tr("app_title") + f"  v{CURRENT_VERSION}")
-        self.resize(1600, 900)
+        self.resize(1680, 1050)
 
         # 设置窗口图标为Fluent内置的下载图标
         self.setWindowIcon(FluentIcon.CLOUD_DOWNLOAD.icon())
