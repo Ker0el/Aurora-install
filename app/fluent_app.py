@@ -7543,16 +7543,12 @@ class SettingsPage(ScrollArea):
         from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
         # 收款码数据：(section_title, wechat_url, alipay_url)
+        assets_dir = APP_ROOT / 'assets'
         sections = [
             (
                 tr("donate_title"),
-                "https://camo.githubusercontent.com/04109c585ad05e20dcd31440afca895f1d79f27714ab16fe8e7a572df6c6f111/68747470733a2f2f7075622d31343138333165363165363934343532383932323239373661313562366662332e72322e6465762f496d6167655f746f5f75726c5f56322f363138383233373537363837363030333036385f3132312d696d616765746f75726c2e636c6f75642d313737343030353531313830322d7369757738372e6a7067",
-                "https://camo.githubusercontent.com/f8b910605f13a067d233bc5ceeee2601cd44d2939f7613c299e4007e2fe76cbf/68747470733a2f2f7075622d31343138333165363165363934343532383932323239373661313562366662332e72322e6465762f496d6167655f746f5f75726c5f56322f363138383233373537363837363030333036395f3132312d696d616765746f75726c2e636c6f75642d313737343030353531333934352d33356e7979652e6a7067",
-            ),
-            (
-                "赞助原项目作者及资源代码帮助",
-                "https://pub-141831e61e69445289222976a15b6fb3.r2.dev/Image_to_url_V2/D802B1D90E33AFCF696B5F13BAB74457-imagetourl.cloud-1774703169429-179e1b.png",
-                "https://pub-141831e61e69445289222976a15b6fb3.r2.dev/Image_to_url_V2/756ED1C8EA7FF43FBE304E86B1C58C49-imagetourl.cloud-1774703169610-iod0j3.jpg",
+                str(assets_dir / 'donate_wechat.jpg'),
+                str(assets_dir / 'donate_alipay.jpg'),
             ),
         ]
 
@@ -7560,7 +7556,6 @@ class SettingsPage(ScrollArea):
             def __init__(self, parent=None):
                 super().__init__(parent)
                 self.titleLabel = TitleLabel(tr("donate_title"), self)
-                self._nam = QNetworkAccessManager(self)
 
                 scroll = SingleDirectionScrollArea(orient=Qt.Orientation.Vertical)
                 scroll.setWidgetResizable(True)
@@ -7614,33 +7609,22 @@ class SettingsPage(ScrollArea):
                     self._load_image(url, img)
 
             def _load_image(self, url, label):
-                reply = self._nam.get(QNetworkRequest(QUrl(url)))
-
-                def on_finished():
-                    try:
-                        if reply.error() == QNetworkReply.NetworkError.NoError:
-                            pixmap = QPixmap()
-                            pixmap.loadFromData(reply.readAll())
-                            if not pixmap.isNull():
-                                # 按 label 实际像素尺寸缩放，保持清晰
-                                dpr = label.devicePixelRatio()
-                                target = int(240 * dpr)
-                                scaled = pixmap.scaled(
-                                    target, target,
-                                    Qt.AspectRatioMode.KeepAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation
-                                )
-                                scaled.setDevicePixelRatio(dpr)
-                                label.setPixmap(scaled)
-                                label.setText("")
-                                return
-                        label.setText(tr("donate_load_failed"))
-                    except RuntimeError:
-                        pass
-                    finally:
-                        reply.deleteLater()
-
-                reply.finished.connect(on_finished)
+                # 本地图片同步加载
+                pixmap = QPixmap(url)
+                if not pixmap.isNull():
+                    # 按 label 实际像素尺寸缩放，保持清晰
+                    dpr = label.devicePixelRatio()
+                    target = int(240 * dpr)
+                    scaled = pixmap.scaled(
+                        target, target,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    scaled.setDevicePixelRatio(dpr)
+                    label.setPixmap(scaled)
+                    label.setText("")
+                else:
+                    label.setText(tr("donate_load_failed"))
 
         DonateDialog(self.window()).exec()
     
