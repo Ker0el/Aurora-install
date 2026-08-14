@@ -4948,6 +4948,25 @@ class SearchPage(ScrollArea):
         async def _fetch():
             try:
                 async with CaiBackend() as backend:
+                    # 主源：SteamSpy 热门榜（国内可达，100 个）
+                    try:
+                        r = await backend.client.get(
+                            "https://steamspy.com/api.php?request=top100in2weeks",
+                            timeout=15
+                        )
+                        if r.status_code == 200:
+                            data = r.json()
+                            games = []
+                            for appid, item in data.items():
+                                name = item.get("name", "")
+                                if appid.isdigit() and name:
+                                    games.append({"appid": str(appid), "name": name})
+                            if games:
+                                return games
+                    except Exception:
+                        pass
+
+                    # 兜底：Steam 官方分类（国内可能被墙）
                     r = await backend.client.get(
                         "https://store.steampowered.com/api/featuredcategories",
                         params={"cc": "cn", "l": "schinese"},
@@ -7770,11 +7789,6 @@ class SettingsPage(ScrollArea):
                 str(resource_path('assets/donate_wechat.jpg')),
                 str(resource_path('assets/donate_alipay.jpg')),
             ),
-            (
-                tr("donate_title"),
-                str(resource_path('assets/donate_wechat.jpg')),
-                str(resource_path('assets/donate_alipay.jpg')),
-            ),
         ]
 
         class DonateDialog(MessageBoxBase):
@@ -7784,7 +7798,7 @@ class SettingsPage(ScrollArea):
 
                 scroll = SingleDirectionScrollArea(orient=Qt.Orientation.Vertical)
                 scroll.setWidgetResizable(True)
-                scroll.setFixedHeight(420)
+                scroll.setFixedHeight(440)
                 scroll.enableTransparentBackground()
 
                 inner = QWidget()
@@ -7812,7 +7826,7 @@ class SettingsPage(ScrollArea):
                         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
                         img = QLabel(tr("donate_loading"))
                         img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        img.setFixedSize(240, 240)
+                        img.setFixedSize(320, 320)
                         img.setStyleSheet("border: 1px solid rgba(128,128,128,0.3); border-radius: 6px;")
                         col.addWidget(lbl_title)
                         col.addWidget(img)
@@ -7828,7 +7842,7 @@ class SettingsPage(ScrollArea):
                 self.viewLayout.addWidget(scroll)
                 self.yesButton.setText("OK")
                 self.cancelButton.hide()
-                self.widget.setMinimumWidth(500)
+                self.widget.setMinimumWidth(720)
 
                 for img, url in self._img_labels:
                     self._load_image(url, img)
@@ -7839,7 +7853,7 @@ class SettingsPage(ScrollArea):
                 if not pixmap.isNull():
                     # 按 label 实际像素尺寸缩放，保持清晰
                     dpr = label.devicePixelRatio()
-                    target = int(240 * dpr)
+                    target = int(320 * dpr)
                     scaled = pixmap.scaled(
                         target, target,
                         Qt.AspectRatioMode.KeepAspectRatio,

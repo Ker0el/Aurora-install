@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.3"  # 当前版本号
+CURRENT_VERSION = "1.4"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -658,7 +658,7 @@ class CaiBackend:
                         _save_global_name_cache()
                         return game_name
         except Exception as e:
-            self.log.warning(f"从Steam官方API获取 AppID {appid} 的名称也失败了: {e}")
+            self.log.debug(f"Steam官方API获取 AppID {appid} 名称失败: {e}")
 
         return f"AppID {appid}"
 
