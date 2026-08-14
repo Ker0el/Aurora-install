@@ -1,0 +1,25 @@
+# PyQt6-Fluent-Widgets 版本依赖
+
+# PyQt6 核心
+PyQt6>=6.4.0
+
+# Fluent Design 组件库（必须使用 PyQt6 版本）
+PyQt6-Fluent-Widgets>=1.5.0
+
+# 现有依赖（从原项目继承）
+httpx>=0.24.0
+socksio>=1.0.0
+aiofiles>=23.0.0
+ujson>=5.8.0
+colorlog>=6.7.0
+vdf>=3.4
+psutil>=5.9.0
+
+# D加密核心依赖
+pycryptodome>=3.18.0  # AES加密/解密，用于CW文件处理
+requests>=2.31.0      # HTTP请求，用于CW授权码下载
+
+# 修改器下载依赖
+cloudscraper>=1.2.71   # 绕过Cloudflare等反爬虫保护
+beautifulsoup4>=4.12.0  # HTML解析，用于修改器页面爬取
+rarfile>=4.0          # RAR文件解压
