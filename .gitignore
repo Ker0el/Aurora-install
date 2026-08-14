@@ -5,3 +5,4 @@ dist/
 build/
 logs/
 config/name_cache.json
+assets/gbe/*.dll
