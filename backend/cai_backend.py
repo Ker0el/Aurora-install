@@ -161,7 +161,7 @@ class CaiBackend:
             await self.client.aclose()
 
     def _init_log(self, level=logging.INFO) -> logging.Logger:
-        logger = logging.getLogger(' Cai install')
+        logger = logging.getLogger('Aurora Install')
         logger.setLevel(level)
         if not logger.handlers:
             stream_handler = colorlog.StreamHandler()
@@ -186,7 +186,7 @@ class CaiBackend:
         if self.config.get("logging_files", True):
             logs_dir = self.project_root / 'logs'
             logs_dir.mkdir(exist_ok=True)
-            log_file_path = logs_dir / f'cai-install-gui-{time.strftime("%Y-%m-%d")}.log'
+            log_file_path = logs_dir / f'aurora-install-gui-{time.strftime("%Y-%m-%d")}.log'
             file_handler = logging.FileHandler(log_file_path, 'a', encoding='utf-8')
             file_handler.setLevel(level)
             file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -260,7 +260,7 @@ class CaiBackend:
             headers = {'Authorization': f'Bearer {github_token}'} if github_token else {}
             
             # 添加 User-Agent 以避免 API 限制
-            headers['User-Agent'] = 'Cai-Install-Updater'
+            headers['User-Agent'] = 'Aurora-Install-Updater'
             
             # 镜像 URL 列表（国内用户优先使用镜像）
             api_urls = [
@@ -595,7 +595,7 @@ class CaiBackend:
                 f"https://store.steampowered.com/api/appdetails?appids={appid}"
             ]
             for api_url in api_urls:
-                response = await self.client.get(api_url, headers={'User-Agent': 'Cai-Install-Manager/1.0'}, timeout=15)
+                response = await self.client.get(api_url, headers={'User-Agent': 'Aurora-Install-Manager/1.0'}, timeout=15)
                 if response.status_code != 200:
                     continue
                 data = response.json()
@@ -3566,8 +3566,8 @@ class CaiBackend:
         "partner.steamgames.com":    "23.52.12.176",
         "steambroadcast.akamaized.net": "23.52.12.176",
     }
-    HOSTS_MARK_BEGIN = "# >>> Cai-Install Steam Accelerate Begin <<<"
-    HOSTS_MARK_END   = "# >>> Cai-Install Steam Accelerate End <<<"
+    HOSTS_MARK_BEGIN = "# >>> Aurora-Install Steam Accelerate Begin <<<"
+    HOSTS_MARK_END   = "# >>> Aurora-Install Steam Accelerate End <<<"
     HOSTS_PATH = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "drivers" / "etc" / "hosts"
 
     def _get_hosts_content(self) -> str:

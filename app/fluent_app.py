@@ -2548,7 +2548,7 @@ class GameCardGrid(CardWidget):
         menu.exec(self.moreButton.mapToGlobal(self.moreButton.rect().bottomLeft()))
 
 
-# ===== 联机核心服务 (移植自 Cai-Install-Reborn) =====
+# ===== 联机核心服务 =====
 import ctypes
 import tempfile
 import threading
@@ -6573,7 +6573,7 @@ class SettingsPage(ScrollArea):
         self._pending_logs: list = []
         self._log_handler = QtLogHandler(self)
         self._log_handler.log_record.connect(self._append_log)
-        logging.getLogger(' Cai install').addHandler(self._log_handler)
+        logging.getLogger('Aurora Install').addHandler(self._log_handler)
 
     def _build_ui(self):
         """兼容 _prebuild_settings 调用，直接触发分帧构建"""
