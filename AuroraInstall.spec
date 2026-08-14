@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets')],
+    datas=[('config', 'config'), ('assets', 'assets')],
     hiddenimports=['backend.cai_backend', 'backend.authorizer_backend', 'backend.cw_extractor_core', 'backend.trainer_backend', 'PyQt6', 'qfluentwidgets', 'httpx', 'socksio', 'aiofiles', 'ujson', 'colorlog', 'vdf', 'Crypto', 'Crypto.Cipher', 'Crypto.Util.Padding'],
     hookspath=[],
     hooksconfig={},

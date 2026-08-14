@@ -34,7 +34,7 @@
 ### 方式二：一键脚本
 
 ```bat
-fluent_install.bat
+install.bat
 ```
 
 自动完成 Python 环境检查、依赖安装与程序启动。
