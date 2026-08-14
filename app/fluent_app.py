@@ -7012,16 +7012,6 @@ class GbePage(ScrollArea):
         mode_wrap.setLayout(mode_row)
         step2_card.addGroup(FluentIcon.SPEED_HIGH, tr("gbe_mode"), tr("gbe_mode_hint"), mode_wrap)
 
-        # 还原按钮
-        self.restore_btn = PushButton(tr("gbe_restore"))
-        self.restore_btn.setFixedWidth(140)
-        self.restore_btn.clicked.connect(self._restore)
-        restore_row = QHBoxLayout()
-        restore_row.addWidget(self.restore_btn)
-        restore_row.addStretch(1)
-        restore_wrap = QWidget()
-        restore_wrap.setLayout(restore_row)
-        step2_card.addGroup(FluentIcon.PLAY, tr("gbe_restore_group"), tr("gbe_restore_hint"), restore_wrap)
         layout.addWidget(step2_card)
 
         # 步骤3：启动
