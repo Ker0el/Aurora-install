@@ -66,6 +66,12 @@ _HOT_GAME_INDEX = [
     {"appid": "1086940", "name": "博德之门3", "name_en": "Baldur's Gate 3"},
     {"appid": "268500", "name": "XCOM 2", "name_en": "XCOM 2"},
     {"appid": "227300", "name": "欧洲卡车模拟2", "name_en": "Euro Truck Simulator 2"},
+    {"appid": "1971650", "name": "歧路旅人 II", "name_en": "Octopath Traveler II"},
+    {"appid": "921570", "name": "歧路旅人", "name_en": "Octopath Traveler"},
+    {"appid": "424840", "name": "小小梦魇", "name_en": "Little Nightmares"},
+    {"appid": "860510", "name": "小小梦魇2", "name_en": "Little Nightmares II"},
+    {"appid": "1903340", "name": "光与影：33号远征队", "name_en": "Clair Obscur: Expedition 33"},
+    {"appid": "892970", "name": "雾锁王国", "name_en": "Enshrouded"},
 ]
 
 # --- MODIFIED: Added Custom_Repos setting ---
@@ -181,12 +187,28 @@ class CaiBackend:
         self.name_cache: Dict[str, str] = _global_name_cache  # 引用全局缓存
 
     async def __aenter__(self):
-        self.client = httpx.AsyncClient(verify=True, trust_env=True)
+        # 双 client：直连（trust_env=False）+ 代理（trust_env=True）
+        # 用户环境（Clash 等）对 Steam API 分流不稳定，直连失败时走系统代理重试
+        self.client = httpx.AsyncClient(verify=True, trust_env=False)
+        self.proxy_client = httpx.AsyncClient(verify=True, trust_env=True)
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.client:
             await self.client.aclose()
+        if getattr(self, 'proxy_client', None):
+            await self.proxy_client.aclose()
+
+    async def _get_fallback(self, url: str, headers: dict = None, timeout: float = 10) -> httpx.Response | None:
+        """直连优先，失败自动走系统代理重试，均失败返回 None。"""
+        for cli in (self.client, self.proxy_client):
+            try:
+                r = await cli.get(url, headers=headers, timeout=timeout)
+                if r.status_code == 200:
+                    return r
+            except Exception:
+                continue
+        return None
 
     def _init_log(self, level=logging.INFO) -> logging.Logger:
         logger = logging.getLogger('Aurora Install')
@@ -3629,32 +3651,7 @@ class CaiBackend:
 
     async def find_appid_by_name(self, game_name: str, lang: str = "schinese") -> List[Dict]:
 
-        # 备用：CaiGames API
-        try:
-            r = await self.client.get(
-                "https://api.9178666.xyz/search",
-                params={'term': game_name},
-                headers={
-                    "X-Client-Auth": "CaiGames-pvzcxw",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json"
-                },
-                timeout=20
-            )
-            if r.status_code != 403:
-                r.raise_for_status()
-                resp_json = r.json()
-                raw_data = resp_json.get("data", []) if isinstance(resp_json, dict) and (resp_json.get("status") == "ok" or "data" in resp_json) else []
-                results = [{'appid': str(i.get('appid')), 'name': i.get('name'), 'header_image': i.get('image')} for i in raw_data if i.get('appid') and i.get('name')]
-                if results:
-                    self.log.info(f"CaiGames API 成功找到 {len(results)} 个匹配结果")
-                    return results
-            else:
-                self.log.warning("CaiGames API 返回 403，切换到 Steam 搜索")
-        except Exception as e:
-            self.log.warning(f"CaiGames API 搜索失败，切换到 Steam 搜索: {e}")
-
-        # 备用：本地内置热门游戏索引（离线兜底）
+        # 优先：本地内置热门游戏索引（毫秒级，覆盖 Steam 搜索对单字/别名支持差的游戏）
         term_lower = game_name.strip().lower()
         if term_lower:
             local_results = []
@@ -3669,6 +3666,59 @@ class CaiBackend:
                 self.log.info(f"本地索引命中 {len(local_results)} 个结果")
                 return local_results
 
+        # 备用：CaiGames API
+        try:
+            r = await self.client.get(
+                "https://api.9178666.xyz/search",
+                params={'term': game_name},
+                headers={
+                    "X-Client-Auth": "CaiGames-pvzcxw",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/json"
+                },
+                timeout=8
+            )
+            if r.status_code == 200:
+                r.raise_for_status()
+                resp_json = r.json()
+                raw_data = resp_json.get("data", []) if isinstance(resp_json, dict) and (resp_json.get("status") == "ok" or "data" in resp_json) else []
+                results = [{'appid': str(i.get('appid')), 'name': i.get('name'), 'header_image': i.get('image')} for i in raw_data if i.get('appid') and i.get('name')]
+                if results:
+                    self.log.info(f"CaiGames API 成功找到 {len(results)} 个匹配结果")
+                    return results
+        except Exception as e:
+            self.log.warning(f"CaiGames API 搜索失败，切换到 Steam 搜索: {e}")
+
+        # 备用：Steam 官方 storesearch JSON API（直连失败自动走系统代理）
+        try:
+            import urllib.parse
+            encoded_term = urllib.parse.quote(game_name)
+            storesearch_url = f"https://store.steampowered.com/api/storesearch/?term={encoded_term}&l={lang}&cc=cn"
+            r = await self._get_fallback(
+                storesearch_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                timeout=8
+            )
+            if r is not None:
+                data = r.json()
+                items = data.get('items', []) if isinstance(data, dict) else []
+                results = [{
+                    'appid': str(i.get('id')),
+                    'name': i.get('name'),
+                    'header_image': i.get('tiny_image') or f"https://cdn.cloudflare.steamstatic.com/steam/apps/{i.get('id')}/header.jpg"
+                } for i in items if i.get('id') and i.get('name')]
+                if results:
+                    # 本地模糊匹配：查询词包含在名称中的优先（单字中文如"歧"命中"歧路旅人"）
+                    term_norm = game_name.strip().lower()
+                    matched = [r for r in results if term_norm and term_norm in str(r.get('name', '')).lower()]
+                    if matched:
+                        self.log.info(f"Steam storesearch 本地模糊匹配命中 {len(matched)} 个结果")
+                        return matched
+                    self.log.info(f"Steam storesearch API 成功找到 {len(results)} 个匹配结果")
+                    return results
+        except Exception as e:
+            self.log.warning(f"Steam storesearch API 搜索失败: {e}")
+
         # 备用：Steam 商店搜索
         try:
             import urllib.parse, re
@@ -3679,9 +3729,9 @@ class CaiBackend:
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             }
-            r = await self.client.get(search_url, headers=headers, timeout=30)
-            if r.status_code != 200:
-                self.log.warning(f"Steam 搜索请求失败，状态码: {r.status_code}")
+            r = await self._get_fallback(search_url, headers=headers, timeout=10)
+            if r is None:
+                self.log.warning(f"Steam 搜索请求失败（直连与代理均不可用）")
                 return []
             game_pattern = re.compile(r'<a href="https://store\.steampowered\.com/app/(\d+)/[^"]*"[^>]*>(.*?)</a>', re.DOTALL)
             games_list = []
@@ -3736,8 +3786,29 @@ class CaiBackend:
                     }
             
             self.log.warning(f"无法通过API获取游戏 {appid} 的详细信息")
+            # 兜底：Steam 官方 appdetails API（直连失败自动走系统代理）
+            r2 = await self._get_fallback(
+                f"https://store.steampowered.com/api/appdetails?appids={appid}&l=schinese",
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                timeout=8
+            )
+            if r2 is not None:
+                data = r2.json()
+                app_data = data.get(str(appid), {})
+                if app_data.get("success") and app_data.get("data"):
+                    gd = app_data["data"]
+                    return {
+                        "appid": appid,
+                        "name": gd.get("name", ""),
+                        "header_image": gd.get("header_image", f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"),
+                        "description": gd.get("short_description", ""),
+                        "price": (gd.get("price_overview", {}) or {}).get("final_formatted", ""),
+                        "release_date": (gd.get("release_date", {}) or {}).get("date", ""),
+                        "platforms": gd.get("platforms", {}),
+                        "metacritic": (gd.get("metacritic", {}) or {}).get("score", 0)
+                    }
             return {"appid": appid, "name": "", "header_image": f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"}
-            
+
         except Exception as e:
             self.log.error(f"获取游戏 {appid} 信息失败: {e}")
             return {"appid": appid, "name": "", "header_image": f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"}

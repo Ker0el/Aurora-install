@@ -3594,7 +3594,7 @@ class HomePage(ScrollArea):
             ost_games = files_data.get('ost', [])
             total = len(st_games) + len(gl_games) + len(ost_games)
 
-            self.stats_label.setText(tr("total_games", total, len(st_games) + len(ost_games), len(gl_games)))
+            self.stats_label.setText(tr("total_games", total, len(st_games), len(ost_games) + len(gl_games)))
 
             # 创建游戏数据列表
             self.all_games_data = []
@@ -4627,12 +4627,12 @@ class SearchPage(ScrollArea):
         
         # 选项
         self.add_dlc_check = CheckBox(tr("add_all_dlc"), self)
-        self.add_dlc_check.setChecked(True)  # 默认勾选添加所有 DLC
+        self.add_dlc_check.setChecked(False)  # 默认不勾选（需要 DLC 解锁时手动勾选）
         self.add_dlc_check.stateChanged.connect(self.on_add_dlc_changed)
         options_layout.addWidget(self.add_dlc_check)
-        
+
         self.patch_key_check = CheckBox(tr("patch_depot_key"), self)
-        self.patch_key_check.setChecked(True)  # 默认勾选修补 Depot Key
+        self.patch_key_check.setChecked(False)  # 默认不勾选（仅 GreenLuma 模式需要）
         self.patch_key_check.stateChanged.connect(self.on_patch_key_changed)
         options_layout.addWidget(self.patch_key_check)
         
@@ -5467,24 +5467,43 @@ class SearchPage(ScrollArea):
             self.search_progress_label.setText("正在搜索游戏...")
             self.search_progress_label.show()
             self.search_progress.show()
-        
+
+        # 回收旧 worker，避免快速连续搜索时旧结果串线导致崩溃
+        _replace_worker(getattr(self, 'search_worker', None))
+        self.search_worker = None
+
         # 检查是否是纯数字（AppID）
         if query.isdigit():
             # 直接处理 AppID
             self.search_worker = AsyncWorker(self._search_appid(query))
             self.search_worker.result_ready.connect(self.on_search_complete)
             self.search_worker.error.connect(self.on_search_error)
+            self.search_worker.finished.connect(self.search_worker.deleteLater)
             self.search_worker.start()
         else:
             # 搜索游戏名称
             self.search_worker = AsyncWorker(self._search_games(query))
             self.search_worker.result_ready.connect(self.on_search_complete)
             self.search_worker.error.connect(self.on_search_error)
+            self.search_worker.finished.connect(self.search_worker.deleteLater)
             self.search_worker.start()
     
     async def _search_appid(self, appid: str):
-        """搜索 AppID"""
-        return {'type': 'appid', 'appid': appid}
+        """搜索 AppID（数字输入：先精确查该 AppID 游戏信息，失败再按名称搜索）"""
+        async with CaiBackend() as backend:
+            await backend.initialize()
+            lang = get_steam_lang(current_language)
+            # 1. 精确查 AppID 游戏信息（如 730 → Counter-Strike 2）
+            info = await backend.get_game_info_by_appid(appid)
+            if info and info.get('name'):
+                return {'type': 'games', 'results': [{
+                    'appid': str(appid),
+                    'name': info.get('name', ''),
+                    'header_image': info.get('header_image', f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"),
+                }]}
+            # 2. 按名称搜索（如 "33" → 光与影：33号远征队）
+            results = await backend.find_appid_by_name(appid, lang)
+            return {'type': 'games', 'results': results}
     
     async def _search_games(self, query: str):
         """搜索游戏名称"""
@@ -5511,41 +5530,58 @@ class SearchPage(ScrollArea):
     @pyqtSlot(object)
     def on_search_complete(self, result):
         """搜索完成"""
-        # 隐藏搜索进度条
-        self.search_progress.hide()
-        self.search_progress_label.hide()
-        
-        worker = self.search_worker
-        self.search_worker = None
-        if worker:
-            try:
-                worker.deleteLater()
-            except RuntimeError:
-                pass
-        
-        if result['type'] == 'appid':
-            # 直接是 AppID，自动开始入库
-            self.unlock_game_direct(result['appid'], None)
-        else:
-            results = result['results']
-            if not results:
-                InfoBar.warning(
-                    title=tr("game_not_found"),
-                    content=tr("check_game_name"),
-                    parent=self,
-                    position=InfoBarPosition.TOP
-                )
+        try:
+            # 只处理当前 worker 的结果，过期结果直接丢弃（防串线崩溃）
+            sender = self.sender()
+            if sender is not None and sender is not self.search_worker:
                 return
-            
-            self.search_results = results
-            self.display_search_results(results)
-            
-            InfoBar.success(
-                title=tr("recognition_success"),
-                content=tr("tip_source_fail") if len(results) > 1 else results[0]['name'],
+            # 隐藏搜索进度条
+            self.search_progress.hide()
+            self.search_progress_label.hide()
+
+            worker = self.search_worker
+            self.search_worker = None
+            if worker:
+                try:
+                    worker.deleteLater()
+                except RuntimeError:
+                    pass
+
+            if result is None:
+                return
+            if result.get('type') == 'appid':
+                # 直接是 AppID，自动开始入库
+                self.unlock_game_direct(result.get('appid'), None)
+            else:
+                results = result.get('results') or []
+                if not results:
+                    InfoBar.warning(
+                        title=tr("game_not_found"),
+                        content=tr("check_game_name"),
+                        parent=self,
+                        position=InfoBarPosition.TOP
+                    )
+                    return
+
+                self.search_results = results
+                self.display_search_results(results)
+
+                InfoBar.success(
+                    title=tr("recognition_success"),
+                    content=tr("tip_source_fail") if len(results) > 1 else str(results[0].get('name', '')),
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=2500
+                )
+        except Exception as e:
+            self.search_progress.hide()
+            self.search_progress_label.hide()
+            InfoBar.error(
+                title=tr("process_failed"),
+                content=str(e),
                 parent=self,
                 position=InfoBarPosition.TOP,
-                duration=2500
+                duration=4000
             )
     
     def display_search_results(self, results):
@@ -5701,25 +5737,33 @@ class SearchPage(ScrollArea):
     @pyqtSlot(str)
     def on_search_error(self, error):
         """搜索失败"""
-        # 隐藏搜索进度条
-        self.search_progress.hide()
-        self.search_progress_label.hide()
-        
-        worker = self.search_worker
-        self.search_worker = None
-        if worker:
-            try:
-                worker.deleteLater()
-            except RuntimeError:
-                pass
-        
-        InfoBar.error(
-            title=tr("search_failed"),
-            content=error,
+        try:
+            # 只处理当前 worker 的错误
+            sender = self.sender()
+            if sender is not None and sender is not self.search_worker:
+                return
+            # 隐藏搜索进度条
+            self.search_progress.hide()
+            self.search_progress_label.hide()
+
+            worker = self.search_worker
+            self.search_worker = None
+            if worker:
+                try:
+                    worker.deleteLater()
+                except RuntimeError:
+                    pass
+
+            InfoBar.error(
+                title=tr("search_failed"),
+                content=error,
             parent=self,
             position=InfoBarPosition.TOP
         )
-    
+        except Exception:
+            self.search_progress.hide()
+            self.search_progress_label.hide()
+
     def notify_home_refresh(self):
         """通知主页刷新游戏列表"""
         # 获取主窗口
@@ -6035,8 +6079,8 @@ class SearchPage(ScrollArea):
 
                 return (success, tool_type_actual if success else "")
 
-        return _unlock
-    
+        return _unlock()
+
     @pyqtSlot(object)
     def on_unlock_complete(self, result):
         """入库完成"""
@@ -6097,7 +6141,7 @@ class SearchPage(ScrollArea):
             error_msg = error
         
         InfoBar.error(
-            title=tr("delete_failed"),
+            title=tr("process_failed"),
             content=error_msg,
             parent=self.window(),
             position=InfoBarPosition.TOP,
@@ -6187,7 +6231,7 @@ class SearchPage(ScrollArea):
                 )
                 try:
                     coro = self._build_unlock_coro(bid, bname, **batch_opts)
-                    ok, _src = await coro()
+                    ok, _src = await coro
                     if ok:
                         success_count += 1
                     else:
