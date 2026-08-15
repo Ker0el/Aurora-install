@@ -201,6 +201,7 @@ TEXTS = {
         "add_all_dlc": "添加所有 DLC",
         "patch_depot_key": "修补 Depot Key",
         "patch_manifest": "修补 Manifest",
+        "pan_search": "搜下载站",
         "manifest_source": "清单源:",
         "view_mode": "视图",
         "sort_mode": "排序",
@@ -382,6 +383,7 @@ TEXTS = {
         "add_all_dlc": "Add All DLC",
         "patch_depot_key": "Patch Depot Key",
         "patch_manifest": "Patch Manifest",
+        "pan_search": "Search Download Sites",
         "manifest_source": "Manifest Source:",
         "add_game": "Add Game",
         "steam_path": "Steam Path",
@@ -1884,7 +1886,7 @@ _NEW_FEATURE_TEXTS = {
         "gbe_applied": "GBE 已应用",
         "gbe_launch_confirm": "GBE 已配置完成，现在启动游戏？",
         "gbe_launch_failed": "启动失败",
-        "gbe_appid_hint": "输入游戏 AppID（如 105600）：",
+        "gbe_appid_hint": "输入游戏 AppID（如 105600）",
         "gbe_restored": "已还原原版 dll",
         "gbe_restore_failed": "还原失败",
         "gbe_nav": "免Steam",
@@ -1972,7 +1974,7 @@ _NEW_FEATURE_TEXTS = {
         "gbe_applied": "GBE applied",
         "gbe_launch_confirm": "GBE configured, launch the game now?",
         "gbe_launch_failed": "Launch failed",
-        "gbe_appid_hint": "Enter game AppID (e.g. 105600):",
+        "gbe_appid_hint": "Enter game AppID (e.g. 105600)",
         "gbe_restored": "Original DLL restored",
         "gbe_restore_failed": "Restore failed",
         "gbe_nav": "No Steam",
@@ -3016,6 +3018,120 @@ class ClearInstalledDialog(MessageBoxBase):
         self.viewLayout.addSpacing(8)
         self.viewLayout.addWidget(self.delete_manifests_check)
         self.widget.setMinimumWidth(420)
+
+
+class PanSearchResultsDialog(MessageBoxBase):
+    """全网搜下载结果对话框：每站显示文章标题 + 网盘链接"""
+
+    def __init__(self, results, parent=None):
+        super().__init__(parent)
+        self.titleLabel = TitleLabel("全网搜下载", self)
+
+        scroll = SingleDirectionScrollArea(orient=Qt.Orientation.Vertical)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedHeight(360)
+        scroll.enableTransparentBackground()
+
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(4, 4, 4, 4)
+        inner_layout.setSpacing(12)
+
+        for res in results:
+            # 站点行
+            site_label = BodyLabel(f"🔍 {res.get('site', '')} · {res.get('title', '')}", inner)
+            site_label.setWordWrap(True)
+            inner_layout.addWidget(site_label)
+
+            # 解压密码提示（CA 游戏 notice）
+            notice = res.get('notice', '')
+            if notice:
+                notice_label = CaptionLabel(f"解压密码: {notice}", inner)
+                notice_label.setTextColor("#ff9800", "#ff9800")
+                inner_layout.addWidget(notice_label)
+
+            # 打开文章页
+            page_btn = HyperlinkButton(res.get('page_url', '#'), "打开文章页")
+            page_btn.clicked.connect(lambda _, u=res.get('page_url', ''): QDesktopServices.openUrl(QUrl(u)))
+            inner_layout.addWidget(page_btn)
+
+            # 百度网盘
+            for b in (res.get('baidu') or [])[:2]:
+                row = QHBoxLayout()
+                url, pwd = b.get('url', ''), b.get('pwd')
+                btn = PushButton("打开百度网盘" if 'baidu' in url else "打开网盘")
+                btn.clicked.connect(lambda _, u=url, p=pwd: self._open_pan(u, p))
+                row.addWidget(btn)
+                if pwd:
+                    pwd_btn = PushButton(f"提取码 {pwd}")
+                    pwd_btn.clicked.connect(lambda _, p=pwd: self._copy_pwd(p))
+                    row.addWidget(pwd_btn)
+                else:
+                    hint = CaptionLabel("（无提取码）")
+                    hint.setTextColor("#909399", "#909399")
+                    row.addWidget(hint)
+                row.addStretch(1)
+                inner_layout.addLayout(row)
+
+            # 夸克网盘
+            for q in (res.get('quark') or [])[:2]:
+                row = QHBoxLayout()
+                url = q.get('url', '')
+                btn = PushButton("打开夸克网盘")
+                btn.clicked.connect(lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
+                row.addWidget(btn)
+                row.addStretch(1)
+                inner_layout.addLayout(row)
+
+            # 迅雷网盘
+            for x in (res.get('xunlei') or [])[:2]:
+                row = QHBoxLayout()
+                url, pwd = x.get('url', ''), x.get('pwd')
+                btn = PushButton("打开迅雷网盘")
+                btn.clicked.connect(lambda _, u=url, p=pwd: self._open_pan(u, p))
+                row.addWidget(btn)
+                if pwd:
+                    pwd_btn = PushButton(f"提取码 {pwd}")
+                    pwd_btn.clicked.connect(lambda _, p=pwd: self._copy_pwd(p))
+                    row.addWidget(pwd_btn)
+                row.addStretch(1)
+                inner_layout.addLayout(row)
+
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addWidget(scroll)
+        self.yesButton.setText("关闭")
+        self.cancelButton.hide()
+        self.widget.setMinimumWidth(560)
+
+    def _open_pan(self, url, pwd):
+        """打开百度网盘（链接已含提取码时直接打开）"""
+        if pwd and 'pwd=' not in url:
+            url = url.split('?')[0] + f"?pwd={pwd}"
+        QDesktopServices.openUrl(QUrl(url))
+        if pwd:
+            QApplication.clipboard().setText(pwd)
+            InfoBar.success(
+                title="提取码已复制",
+                content=f"提取码 {pwd} 已复制到剪贴板",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=2500
+            )
+
+    def _copy_pwd(self, pwd):
+        """复制提取码"""
+        QApplication.clipboard().setText(pwd)
+        InfoBar.success(
+            title="提取码已复制",
+            content=f"提取码 {pwd} 已复制到剪贴板",
+            parent=self,
+            position=InfoBarPosition.TOP,
+            duration=2500
+        )
 
 
 class HomePage(ScrollArea):
@@ -4340,10 +4456,21 @@ class SearchResultCard(CardWidget):
         
         menu.addMenu(copy_menu)
         menu.addSeparator()
-        
+
         menu.addAction(Action(FluentIcon.SHOPPING_CART, "查看商店页面", triggered=lambda: QDesktopServices.openUrl(QUrl(f"https://store.steampowered.com/app/{self.appid}"))))
         menu.addAction(Action(FluentIcon.LINK, "查看 SteamDB", triggered=lambda: QDesktopServices.openUrl(QUrl(f"https://steamdb.info/app/{self.appid}"))))
+        menu.addSeparator()
+        menu.addAction(Action(FluentIcon.DOWNLOAD, "全网搜下载", triggered=self.on_pan_search))
         menu.exec(self.moreButton.mapToGlobal(self.moreButton.rect().bottomLeft()))
+
+    def on_pan_search(self):
+        """全网搜下载：并行扫下载站，弹结果对话框"""
+        parent = self.parent()
+        while parent and not isinstance(parent, SearchPage):
+            parent = parent.parent()
+        if not parent:
+            return
+        parent.start_pan_search(self.appid, self.game_name)
 
 
 class SearchResultCardGrid(CardWidget):
@@ -4534,15 +4661,146 @@ class SearchResultCardGrid(CardWidget):
         
         menu.addMenu(copy_menu)
         menu.addSeparator()
-        
+
         menu.addAction(Action(FluentIcon.SHOPPING_CART, "查看商店页面", triggered=lambda: QDesktopServices.openUrl(QUrl(f"https://store.steampowered.com/app/{self.appid}"))))
         menu.addAction(Action(FluentIcon.LINK, "查看 SteamDB", triggered=lambda: QDesktopServices.openUrl(QUrl(f"https://steamdb.info/app/{self.appid}"))))
+        menu.addSeparator()
+        menu.addAction(Action(FluentIcon.DOWNLOAD, "全网搜下载", triggered=self.on_pan_search))
         menu.exec(self.moreButton.mapToGlobal(self.moreButton.rect().bottomLeft()))
+
+    def on_pan_search(self):
+        """全网搜下载：并行扫下载站，弹结果对话框"""
+        parent = self.parent()
+        while parent and not isinstance(parent, SearchPage):
+            parent = parent.parent()
+        if not parent:
+            return
+        parent.start_pan_search(self.appid, self.game_name)
+
+
+class PanResultCard(CardWidget):
+    """下载站结果卡片（勾选「搜下载站」后混入搜索结果）"""
+
+    def __init__(self, game, parent=None):
+        super().__init__(parent)
+        self.game = game
+        self.appid = game.get('appid', 'pan')
+        self.game_name = game.get('name', '')
+
+        self.hBoxLayout = QHBoxLayout(self)
+        self.vBoxLayout = QVBoxLayout()
+
+        # 图标
+        self.iconLabel = QLabel("⤓", self)
+        self.iconLabel.setFixedSize(48, 48)
+        self.iconLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.iconLabel.setStyleSheet("font-size: 24px;")
+
+        # 标题 + 来源
+        self.titleLabel = BodyLabel(game.get('name', ''), self)
+        self.titleLabel.setWordWrap(True)
+
+        self.infoLabel = CaptionLabel("下载站手动下载", self)
+        self.infoLabel.setTextColor("#ff9800", "#ff9800")
+
+        # 解压密码标注（CA 游戏详情 notice）
+        self.noticeLabel = None
+        notice = game.get('notice', '')
+        if notice:
+            self.noticeLabel = CaptionLabel(f"解压密码: {notice}", self)
+            self.noticeLabel.setTextColor("#ff9800", "#ff9800")
+
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
+        self.vBoxLayout.setSpacing(4)
+        self.vBoxLayout.addWidget(self.titleLabel)
+        self.vBoxLayout.addWidget(self.infoLabel)
+        if self.noticeLabel:
+            self.vBoxLayout.addWidget(self.noticeLabel)
+
+        # 打开文章页按钮
+        self.openButton = PushButton("打开文章页", self)
+        self.openButton.setFixedHeight(28)
+        self.openButton.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.game.get('pan_url', ''))))
+
+        # 查看资源按钮
+        self.viewButton = PrimaryPushButton("查看下载资源", self)
+        self.viewButton.setFixedHeight(28)
+        self.viewButton.clicked.connect(self._show_resources)
+
+        self.hBoxLayout.addWidget(self.iconLabel)
+        self.hBoxLayout.addLayout(self.vBoxLayout)
+        self.hBoxLayout.addStretch(1)
+        self.hBoxLayout.addWidget(self.openButton)
+        self.hBoxLayout.addWidget(self.viewButton)
+        self.setFixedHeight(96 if self.noticeLabel else 80)
+
+    def _show_resources(self):
+        """弹下载资源对话框（CA 游戏惰性加载详情）"""
+        game = self.game
+        # 已有链接直接弹
+        if game.get('baidu') or game.get('quark'):
+            self._open_dialog(game)
+            return
+        # CA 游戏：按需加载详情
+        if game.get('gid'):
+            self.viewButton.setEnabled(False)
+            self.viewButton.setText("加载中...")
+            from backend.pan_search_backend import fetch_cagames_detail
+
+            async def _load():
+                return fetch_cagames_detail(game['gid'])
+
+            _replace_worker(getattr(self, '_detail_worker', None))
+            self._detail_worker = AsyncWorker(_load())
+            self._detail_worker.result_ready.connect(self._on_detail_loaded)
+            self._detail_worker.error.connect(lambda e: self._on_detail_error(str(e)))
+            self._detail_worker.finished.connect(self._detail_worker.deleteLater)
+            self._detail_worker.start()
+            return
+        self._open_dialog(game)
+
+    def _on_detail_loaded(self, detail):
+        """CA 游戏详情加载完成"""
+        self.viewButton.setEnabled(True)
+        self.viewButton.setText("查看下载资源")
+        game = dict(self.game)
+        game['baidu'] = detail.get('baidu', [])
+        game['quark'] = detail.get('quark', [])
+        notice = detail.get('notice', '')
+        if notice and not game.get('notice'):
+            game['notice'] = notice
+        self.game = game
+        self._open_dialog(game)
+
+    def _on_detail_error(self, error):
+        """CA 游戏详情加载失败"""
+        self.viewButton.setEnabled(True)
+        self.viewButton.setText("查看下载资源")
+        InfoBar.error(
+            title="全网搜下载",
+            content=f"加载下载链接失败: {error}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=3000
+        )
+
+    def _open_dialog(self, game):
+        """弹下载资源对话框"""
+        dialog = PanSearchResultsDialog([{
+            'site': game.get('name', '').split('·')[0].replace('[下载]', '').strip(),
+            'title': game.get('name', ''),
+            'page_url': game.get('pan_url', ''),
+            'baidu': game.get('baidu', []),
+            'quark': game.get('quark', []),
+            'xunlei': game.get('xunlei', []),
+            'notice': game.get('notice', ''),
+        }], self.window())
+        dialog.exec()
 
 
 class SearchPage(ScrollArea):
     """搜索和入库页面"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("searchPage")
@@ -4641,6 +4899,12 @@ class SearchPage(ScrollArea):
         self.patch_manifest_check.setChecked(False)
         self.patch_manifest_check.stateChanged.connect(self.on_patch_manifest_changed)
         options_layout.addWidget(self.patch_manifest_check)
+
+        # 搜下载站选项（勾选后搜索结果混入下载站资源卡片）
+        self.pan_search_check = CheckBox(tr("pan_search"), self)
+        self.pan_search_check.setChecked(True)  # 默认勾选
+        self.pan_search_check.stateChanged.connect(self.on_pan_search_changed)
+        options_layout.addWidget(self.pan_search_check)
         
         options_layout.addStretch(1)
         layout.addLayout(options_layout)
@@ -4985,18 +5249,52 @@ class SearchPage(ScrollArea):
         try:
             config_path = APP_ROOT / 'config' / 'config.json'
             import json
-            
+
             # 读取配置
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                
+
                 # 获取保存的修补Manifest选项状态
                 patch_manifest_default = config.get("patch_manifest_default", False)
                 self.patch_manifest_check.setChecked(patch_manifest_default)
-                
+
         except Exception as e:
             print(f"加载修补Manifest选项失败: {e}")
+
+    def on_pan_search_changed(self):
+        """搜下载站选项改变时保存状态"""
+        self.save_pan_search_preference()
+
+    def save_pan_search_preference(self):
+        """保存搜下载站选项状态"""
+        try:
+            config_path = APP_ROOT / 'config' / 'config.json'
+            import json
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            else:
+                from backend.cai_backend import DEFAULT_CONFIG
+                config = DEFAULT_CONFIG.copy()
+            config["pan_search_default"] = self.pan_search_check.isChecked()
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"保存搜下载站选项失败: {e}")
+
+    def load_pan_search_preference(self):
+        """加载搜下载站选项状态"""
+        try:
+            config_path = APP_ROOT / 'config' / 'config.json'
+            import json
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                pan_search_default = config.get("pan_search_default", True)  # 默认勾选
+                self.pan_search_check.setChecked(pan_search_default)
+        except Exception as e:
+            print(f"加载搜下载站选项失败: {e}")
     
     def __del__(self):
         """析构函数，确保清理所有worker"""
@@ -5405,6 +5703,111 @@ class SearchPage(ScrollArea):
                 pass
             self._rec_end_label = None
 
+    def start_pan_search(self, appid, game_name):
+        """全网搜下载：后台并行扫下载站"""
+        from backend.pan_search_backend import search_game_downloads
+
+        _replace_worker(getattr(self, 'pan_search_worker', None))
+        self.pan_search_worker = AsyncWorker(
+            self._run_pan_search(appid, game_name)
+        )
+        self.pan_search_worker.result_ready.connect(self._on_pan_search_done)
+        self.pan_search_worker.error.connect(self._on_pan_search_error)
+        self.pan_search_worker.finished.connect(self.pan_search_worker.deleteLater)
+        self.pan_search_worker.start()
+
+        InfoBar.info(
+            title="全网搜下载",
+            content=f"正在搜索 {game_name or appid} 的下载资源...",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=2000
+        )
+
+    async def _run_pan_search(self, appid, game_name):
+        """后台执行搜索（在 worker 线程）"""
+        from backend.pan_search_backend import search_game_downloads
+        return search_game_downloads(str(game_name or ''), str(game_name or ''), str(appid))
+
+    @pyqtSlot(object)
+    def _on_pan_search_done(self, results):
+        """全网搜下载完成"""
+        if not results:
+            InfoBar.warning(
+                title="全网搜下载",
+                content="未找到该游戏的下载资源，可尝试其他关键词",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=4000
+            )
+            return
+        dialog = PanSearchResultsDialog(results, self.window())
+        dialog.exec()
+
+    @pyqtSlot(str)
+    def _on_pan_search_error(self, error):
+        """全网搜下载失败"""
+        InfoBar.error(
+            title="全网搜下载",
+            content=f"搜索失败: {error}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=4000
+        )
+
+    def _append_pan_cards(self, results):
+        """把下载站结果追加到搜索结果尾部并刷新显示"""
+        if not results:
+            return
+        pan_items = [{
+            'appid': f'pan-{i}',
+            'name': f"[下载] {r.get('site', '')} · {r.get('title', '')}",
+            'pan_url': r.get('page_url', ''),
+            'baidu': r.get('baidu', []),
+            'quark': r.get('quark', []),
+            'xunlei': r.get('xunlei', []),
+            'gid': r.get('gid', ''),
+            'slug': r.get('slug', ''),
+            'notice': r.get('notice', ''),
+        } for i, r in enumerate(results)]
+        # 追加并刷新（跳过"显示更多"分页限制，直接全量追加到当前已显示列表）
+        self.search_results = [g for g in self.search_results if not str(g.get('appid', '')).startswith('pan-')] + pan_items
+        # 重新显示全部
+        self._result_shown = 0
+        for card in self.result_cards:
+            try:
+                card.deleteLater()
+            except RuntimeError:
+                pass
+        self.result_cards.clear()
+        self.display_search_results(self.search_results)
+        InfoBar.success(
+            title="搜下载站",
+            content=f"找到 {len(pan_items)} 个下载资源",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=2500
+        )
+
+    def _search_pan_sites(self, query, results):
+        """勾选「搜下载站」时：后台搜索下载站并混入结果列表"""
+        # 取第一个结果的名称作为关键词（优先英文名）
+        kw = ''
+        for g in results:
+            name = str(g.get('name', ''))
+            if name and name not in ('名称未找到', '获取失败'):
+                kw = name
+                break
+        if not kw:
+            kw = query
+
+        _replace_worker(getattr(self, 'pan_search_worker', None))
+        self.pan_search_worker = AsyncWorker(self._run_pan_search('', kw))
+        self.pan_search_worker.result_ready.connect(self._append_pan_cards)
+        self.pan_search_worker.error.connect(self._on_pan_search_error)
+        self.pan_search_worker.finished.connect(self.pan_search_worker.deleteLater)
+        self.pan_search_worker.start()
+
     def _show_more_search(self):
         """搜索结果分页：追加显示 20 个"""
         if not self.search_results:
@@ -5413,7 +5816,9 @@ class SearchPage(ScrollArea):
         start = self._result_shown
         end = min(start + 20, len(sorted_results))
         for game in sorted_results[start:end]:
-            if self.current_view_mode == "grid":
+            if game.get('pan_url'):
+                card = PanResultCard(game, self)
+            elif self.current_view_mode == "grid":
                 card = SearchResultCardGrid(game['appid'], game['name'], self)
             else:
                 card = SearchResultCard(game['appid'], game['name'], self)
@@ -5555,6 +5960,18 @@ class SearchPage(ScrollArea):
             else:
                 results = result.get('results') or []
                 if not results:
+                    # Steam 搜不到：若勾选「搜下载站」，仍尝试下载站（可能不是 Steam 游戏）
+                    if getattr(self, 'pan_search_check', None) and self.pan_search_check.isChecked():
+                        q = self.search_input.text().strip()
+                        self._search_pan_sites(q, [{'name': q}])
+                        InfoBar.info(
+                            title="搜下载站",
+                            content=f"Steam 未找到「{q}」，正在搜索下载站...",
+                            parent=self,
+                            position=InfoBarPosition.TOP,
+                            duration=3000
+                        )
+                        return
                     InfoBar.warning(
                         title=tr("game_not_found"),
                         content=tr("check_game_name"),
@@ -5573,6 +5990,11 @@ class SearchPage(ScrollArea):
                     position=InfoBarPosition.TOP,
                     duration=2500
                 )
+
+                # 勾选「搜下载站」时，后台并行搜索下载站资源并混入结果列表
+                if getattr(self, 'pan_search_check', None) and self.pan_search_check.isChecked():
+                    q = self.search_input.text().strip()
+                    self._search_pan_sites(q, results)
         except Exception as e:
             self.search_progress.hide()
             self.search_progress_label.hide()
@@ -5615,7 +6037,9 @@ class SearchPage(ScrollArea):
         # 创建结果卡片
         for game in sorted_results[:limit]:
             # 根据视图模式创建不同类型的卡片
-            if self.current_view_mode == "grid":
+            if game.get('pan_url'):
+                card = PanResultCard(game, self)
+            elif self.current_view_mode == "grid":
                 card = SearchResultCardGrid(game['appid'], game['name'], self)
             else:
                 card = SearchResultCard(game['appid'], game['name'], self)
@@ -5633,11 +6057,17 @@ class SearchPage(ScrollArea):
     def sort_search_results(self, results):
         """根据排序选项对搜索结果进行排序"""
         sort_mode = self.sort_combo.currentText()
-        
+
+        def _key(x):
+            name = str(x.get('name', ''))
+            if name.startswith('[下载]'):
+                return 'zzz' + name  # 下载站卡片排最后
+            return name
+
         if sort_mode == tr("sort_az"):
-            return sorted(results, key=lambda x: x['name'])
+            return sorted(results, key=_key)
         elif sort_mode == tr("sort_za"):
-            return sorted(results, key=lambda x: x['name'], reverse=True)
+            return sorted(results, key=_key, reverse=True)
         else:  # 默认 - 保持原始顺序
             return results
     
@@ -7160,7 +7590,7 @@ class GbePage(ScrollArea):
         # AppID 自动检测 + 手动输入
         self.appid_edit = LineEdit()
         self.appid_edit.setPlaceholderText(tr("gbe_appid_hint"))
-        self.appid_edit.setFixedWidth(160)
+        self.appid_edit.setFixedWidth(280)
         self.appid_status = BodyLabel(tr("gbe_appid_detect_pending"))
         self.appid_status.setTextColor("#909399", "#b0b3b8")
 
