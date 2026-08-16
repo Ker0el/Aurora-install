@@ -327,5 +327,93 @@ class CompareVersionsTestCase(unittest.TestCase):
         self.assertEqual(self.cmp(self.obj, '1.0', 'abc'), 1)
 
 
+class SanitizeNameTestCase(unittest.TestCase):
+    """入库记录名字清洗：占位名不写入、不降级已有真实名"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='aurora_test_'))
+        self.records_path = self.tmp / 'config' / 'installed_games.json'
+        self._old_path = fluent_app.INSTALLED_RECORDS_PATH
+        self._old_steam = fluent_app._get_steam_path_sync
+        fluent_app.INSTALLED_RECORDS_PATH = self.records_path
+        fluent_app._get_steam_path_sync = lambda: None
+
+    def tearDown(self):
+        fluent_app.INSTALLED_RECORDS_PATH = self._old_path
+        fluent_app._get_steam_path_sync = self._old_steam
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_placeholder_detection(self):
+        self.assertTrue(fluent_app._is_placeholder_name(''))
+        self.assertTrue(fluent_app._is_placeholder_name(None))
+        self.assertTrue(fluent_app._is_placeholder_name('   '))
+        self.assertTrue(fluent_app._is_placeholder_name('AppID 33'))
+        self.assertTrue(fluent_app._is_placeholder_name('appid 33'))
+        self.assertTrue(fluent_app._is_placeholder_name('名称未找到'))
+        self.assertFalse(fluent_app._is_placeholder_name('光与影：33号远征队'))
+        self.assertFalse(fluent_app._is_placeholder_name('AppIDent'))
+        self.assertFalse(fluent_app._is_placeholder_name('appidem'))
+
+    def test_sanitize_empty_writes_blank(self):
+        fluent_app._add_installed_record(33, None, 'sudama')
+        fluent_app._add_installed_record(33, 'AppID 33', 'sudama')  # 占位也不写入
+        recs = fluent_app._load_installed_records()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]['name'], '')
+        self.assertEqual(recs[0]['source'], 'sudama')
+
+    def test_sanitize_real_name_written(self):
+        fluent_app._add_installed_record(33, '光与影：33号远征队', 'sudama')
+        recs = fluent_app._load_installed_records()
+        self.assertEqual(recs[0]['name'], '光与影：33号远征队')
+
+    def test_sanitize_keeps_existing_real_name(self):
+        fluent_app._add_installed_record(33, '光与影：33号远征队', 'sudama')
+        fluent_app._add_installed_record(33, None, 'cysaw')  # 重装，名字缺失 → 保留旧真实名
+        recs = fluent_app._load_installed_records()
+        self.assertEqual(recs[0]['name'], '光与影：33号远征队')
+        self.assertEqual(recs[0]['source'], 'cysaw')  # 来源正常覆盖
+
+
+class MatchInstalledRecordsTestCase(unittest.TestCase):
+    """本地已入库记录匹配（搜索页离线命中）"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='aurora_test_'))
+        self.records_path = self.tmp / 'config' / 'installed_games.json'
+        self._old_path = fluent_app.INSTALLED_RECORDS_PATH
+        self._old_steam = fluent_app._get_steam_path_sync
+        fluent_app.INSTALLED_RECORDS_PATH = self.records_path
+        fluent_app._get_steam_path_sync = lambda: None
+        fluent_app._save_installed_records([
+            {"appid": "33", "name": "", "source": "sudama"},
+            {"appid": "4126220", "name": "克鲁赛德战记", "source": "cysaw"},
+            {"appid": "notdigit", "name": "无效", "source": "auto"},
+        ])
+
+    def tearDown(self):
+        fluent_app.INSTALLED_RECORDS_PATH = self._old_path
+        fluent_app._get_steam_path_sync = self._old_steam
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_match_by_appid_exact(self):
+        hits = fluent_app._match_installed_records('33')
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]['appid'], '33')
+        self.assertEqual(hits[0]['name'], 'AppID 33')  # 空名回退占位显示
+
+    def test_match_by_name_substring(self):
+        hits = fluent_app._match_installed_records('克鲁赛德')
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]['appid'], '4126220')
+        self.assertEqual(hits[0]['name'], '克鲁赛德战记')
+        self.assertTrue(hits[0]['from_local'])
+        self.assertTrue(hits[0]['header_image'].startswith('http'))
+
+    def test_match_no_hit(self):
+        self.assertEqual(fluent_app._match_installed_records('不存在的游戏'), [])
+        self.assertEqual(fluent_app._match_installed_records(''), [])
+
+
 if __name__ == '__main__':
     unittest.main()

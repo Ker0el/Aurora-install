@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.7"  # 当前版本号
+CURRENT_VERSION = "1.8"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -185,6 +185,7 @@ class CaiBackend:
         self.manifest_record_path = self.project_root / 'manifest_records.json'
         self.log = self._init_log()
         self.name_cache: Dict[str, str] = _global_name_cache  # 引用全局缓存
+        self._name_fetch_failures: Dict[str, float] = {}  # appid -> 失败时间戳（冷却期内不重试）
 
     async def __aenter__(self):
         # 双 client：直连（trust_env=False）+ 代理（trust_env=True）
@@ -775,14 +776,14 @@ class CaiBackend:
         """为文件管理器异步获取游戏名称，并使用缓存。默认使用steamCMD API，失败则使用Steam官方API。"""
         if not appid or not appid.isdigit():
             return "无效AppID"
-        
+
         cache_key = f"{appid}_{lang}"
         if cache_key in self.name_cache:
             return self.name_cache[cache_key]
 
-        # 优先使用 steamCMD API
+        # 优先使用 steamCMD API（直连失败自动走系统代理）
         try:
-            r = await self.client.get(
+            r = await self._get_fallback(
                 f"https://api.9178666.xyz/cmd/{appid}",
                 headers={
                     "X-Client-Auth": "CaiGames-pvzcxw",
@@ -791,7 +792,7 @@ class CaiBackend:
                 },
                 timeout=15
             )
-            if r.status_code == 200:
+            if r is not None:
                 data = r.json()
                 if data.get("success") and "data" in data:
                     game_name = data["data"].get("name", "")
@@ -804,12 +805,12 @@ class CaiBackend:
 
         # 备用：SteamCMD API (api.steamcmd.net，实测可用)
         try:
-            r = await self.client.get(
+            r = await self._get_fallback(
                 f"https://api.steamcmd.net/v1/info/{appid}",
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
                 timeout=15
             )
-            if r.status_code == 200:
+            if r is not None:
                 info_root = r.json().get("data", {})
                 info = info_root.get(str(appid), info_root)
                 game_name = info.get("common", {}).get("name", "")
@@ -828,8 +829,8 @@ class CaiBackend:
                 f"https://store.steampowered.com/api/appdetails?appids={appid}"
             ]
             for api_url in api_urls:
-                response = await self.client.get(api_url, headers={'User-Agent': 'Aurora-Install-Manager/1.0'}, timeout=15)
-                if response.status_code != 200:
+                response = await self._get_fallback(api_url, headers={'User-Agent': 'Aurora-Install-Manager/1.0'}, timeout=15)
+                if response is None:
                     continue
                 data = response.json()
                 app_data = data.get(str(appid), {})
@@ -842,6 +843,7 @@ class CaiBackend:
         except Exception as e:
             self.log.debug(f"Steam官方API获取 AppID {appid} 名称失败: {e}")
 
+        self._name_fetch_failures[appid] = time.time()  # 冷却期内不重复请求
         return f"AppID {appid}"
 
     # --- 联机游戏启动配置管理 ---
@@ -944,10 +946,15 @@ class CaiBackend:
     async def fetch_missing_game_names(self, file_data: Dict, lang: str = "schinese") -> Dict:
         """对 file_data 中名称缺失的条目批量请求 Steam API，返回 {appid: name} 映射。"""
         missing = set()
+        now = time.time()
         for category in file_data:
             for item in file_data[category]:
                 cache_key = f"{item['appid']}_{lang}"
                 if cache_key not in self.name_cache and item['appid'].isdigit():
+                    # 跳过冷却期（600秒）内失败过的 appid，避免网络故障时反复打 API
+                    last_fail = self._name_fetch_failures.get(item['appid'], 0)
+                    if now - last_fail < 600:
+                        continue
                     missing.add(item['appid'])
 
         if not missing:

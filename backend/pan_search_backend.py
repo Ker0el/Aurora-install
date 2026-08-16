@@ -8,6 +8,8 @@
   - 52yx.net       搜索 /search/{kw}，文章 /{id}.html
   - playzip.com    搜索 /?s={kw}，文章 /game/{id}
   - cagames.top    经常不可达，失败跳过
+  - galgamebox.com  JSON API（直连可达，无需代理）；搜索接口固定返回最新 10 个游戏需客户端过滤；
+                    资源接口给网盘链接（含 pwd/code）与站点直链（dl.galgamebox.net 需登录仅展示）
 """
 import re
 import ssl
@@ -39,6 +41,7 @@ SITES = [
     {"name": "123资源库", "search": "https://www.123zyk.com/?s={kw}&type=post", "post_re": r'https://www\.123zyk\.com/(\d+)'},
     # SteamZG 搜索是纯客户端 hash 路由（服务端不筛关键词，?s= 返回 500），无法服务端搜索，暂不接入
     {"name": "52游戏网", "search": "https://www.52yx.net/search/{kw}", "post_re": r'https://www\.52yx\.net/(\d+)\.html'},
+    {"name": "GalgameBox", "api": True},
 ]
 
 
@@ -287,6 +290,84 @@ def _scan_site(site: Dict, keywords: List[str]) -> List[Dict]:
     return []
 
 
+def _scan_galgamebox(keywords: List[str], appid: str = "") -> List[Dict]:
+    """GalgameBox：JSON API（直连可达）。title= 参数服务端模糊过滤但截断 10 条，短词会漏老游戏，
+    故按关键词逐个查询合并；首条命中走 /api/game/{uniqueId} 详情拿完整资源（网盘+直链+解压密码）"""
+    kw_norm = [k.lower() for k in keywords if k]
+    seen = {}
+    for kw in keywords:
+        if not kw:
+            continue
+        try:
+            r = _http_get("https://galgamebox.com/api/games?title=" + urllib.parse.quote(kw))
+            if r is None:
+                continue
+            games = (r.json().get('data') or {}).get('games') or []
+            for g in games:
+                gid = g.get('id')
+                if not gid or gid in seen:
+                    continue
+                name = str(g.get('name') or '')
+                alt = g.get('altNames') or []
+                sid = str(g.get('steamAppId') or '')
+                if appid and appid.isdigit() and sid == appid:
+                    pass  # appid 精确命中
+                elif not any(k in name.lower() or any(k in (a or '').lower() for a in alt) for k in kw_norm):
+                    continue
+                seen[gid] = g
+        except Exception:
+            continue
+    if not seen:
+        return []
+    # 首条深查详情拿完整资源，其余仅给标题+链接
+    results = []
+    for i, g in enumerate(list(seen.values())[:5]):
+        gid = g.get('id')
+        uid = g.get('uniqueId')
+        base = {
+            'site': 'GalgameBox',
+            'title': str(g.get('name') or '')[:60],
+            'page_url': f"https://galgamebox.com/game/{uid or gid}",
+            'baidu': [], 'quark': [], 'xunlei': [], 'direct': [], 'notice': '',
+        }
+        if i == 0:
+            r2 = _http_get(f"https://galgamebox.com/api/game/{uid}", timeout=10)
+            if r2 is not None:
+                d = (r2.json() or {}).get('data') or {}
+                base.update(_parse_galgamebox_resources(d.get('resources') or []))
+                base['title'] = str(d.get('name') or base['title'])[:60]
+        results.append(base)
+    return results
+
+
+def _parse_galgamebox_resources(res_list: List[Dict]) -> Dict:
+    """GalgameBox 资源列表 → {baidu, quark, xunlei, direct, notice}"""
+    baidu, quark, xunlei, direct = [], [], [], []
+    notice = ''
+    for res in res_list:
+        code = res.get('code') or ''
+        if res.get('unzipCode'):
+            notice = str(res['unzipCode'])
+        for u in (res.get('urls') or []):
+            if 'pan.baidu.com/s/' in u:
+                m = re.search(r'pwd=([A-Za-z0-9]+)', u)
+                pwd = m.group(1) if m else (code or None)
+                url = u.split('?')[0] + (f"?pwd={pwd}" if pwd else "")
+                if url not in [b['url'] for b in baidu]:
+                    baidu.append({'url': url, 'pwd': pwd})
+            elif 'pan.quark.cn/s/' in u:
+                if u not in [q['url'] for q in quark]:
+                    quark.append({'url': u, 'pwd': code or None})
+            elif 'pan.xunlei.com/s/' in u:
+                if u not in [x['url'] for x in xunlei]:
+                    xunlei.append({'url': u, 'pwd': code or None})
+            elif 'dl.galgamebox.net/' in u:
+                if u not in [d['url'] for d in direct]:
+                    direct.append({'url': u, 'size': res.get('size') or ''})
+    return {'baidu': baidu[:3], 'quark': quark[:3], 'xunlei': xunlei[:3],
+            'direct': direct[:3], 'notice': notice}
+
+
 def _scan_jidiyouxi(keywords: List[str]) -> List[Dict]:
     """jidiyouxi：搜索页内嵌 JSON（topic id + 标题），详情页 content 字段含网盘链接（/ 转义）"""
     for kw in keywords:
@@ -338,7 +419,7 @@ def search_game_downloads(game_name_zh: str, game_name_en: str, appid: str = "")
     """并行搜索所有站点。返回 [{site, title, page_url, baidu:[{url,pwd}], quark:[{url,pwd}]}]"""
     keywords = []
     for k in (game_name_en, game_name_zh):
-        if k and k not in keywords and len(k) > 1:
+        if k and k not in keywords and (len(k) > 1 or any(ord(c) > 0x2E80 for c in k)):
             keywords.append(k)
             # 截断变体：官方源名称常带后缀（如 "- Deluxe Upgrade"），去掉分隔符后的短名提高匹配率
             for sep in (' - ', ' — ', '：', ': ', '（'):
@@ -353,6 +434,7 @@ def search_game_downloads(game_name_zh: str, game_name_en: str, appid: str = "")
     pool = ThreadPoolExecutor(max_workers=len(SITES) + 2)
     futures = {pool.submit(_scan_cagames, keywords): 'CA游戏'}
     futures[pool.submit(_scan_jidiyouxi, keywords)] = 'jidiyouxi'
+    futures[pool.submit(_scan_galgamebox, keywords, appid)] = 'GalgameBox'
     for site in SITES[1:]:
         futures[pool.submit(_scan_site, site, keywords)] = site['name']
     try:

@@ -2106,6 +2106,44 @@ def _remove_installed_record(appid):
         pass
 
 
+def _is_placeholder_name(name) -> bool:
+    """判断名字是否为空/已知失败占位（'AppID x' 形式）"""
+    if not name or not str(name).strip():
+        return True
+    s = str(name).strip()
+    return (s in ('名称未找到', '获取失败', tr('name_not_found'), tr('fetch_failed'), tr('unknown_game'))
+            or s.lower().startswith('appid '))
+
+
+def _sanitize_record_name(appid, name):
+    """占位名不写入记录；若记录已有真实名则保留旧名（不降级）；否则留空等补名回填"""
+    if not _is_placeholder_name(name):
+        return str(name)
+    for r in _load_installed_records():
+        if str(r.get('appid', '')) == str(appid) and not _is_placeholder_name(r.get('name', '')):
+            return r['name']
+    return ""
+
+
+def _match_installed_records(term) -> list:
+    """在已入库记录中匹配：appid 精确 / 名称子串（大小写不敏感）。返回搜索结果结构"""
+    term_lower = str(term).strip().lower()
+    out = []
+    for r in _load_installed_records():
+        aid = str(r.get('appid', '')).strip()
+        rname = str(r.get('name', '') or '').strip()
+        if not aid.isdigit():
+            continue
+        if term_lower and (term_lower == aid.lower() or (rname and term_lower in rname.lower())):
+            out.append({
+                'appid': aid,
+                'name': rname or f"AppID {aid}",
+                'header_image': f"https://cdn.cloudflare.steamstatic.com/steam/apps/{aid}/header.jpg",
+                'from_local': True,
+            })
+    return out
+
+
 def _add_installed_record(appid, name, source, dlcs=None):
     """写入一条已入库记录（按 appid 去重）"""
     try:
@@ -2113,7 +2151,7 @@ def _add_installed_record(appid, name, source, dlcs=None):
         records = [r for r in records if str(r.get('appid', '')) != str(appid)]
         records.append({
             "appid": str(appid),
-            "name": name or "",
+            "name": _sanitize_record_name(appid, name),
             "source": source or "auto",
             "installed_at": _time.strftime('%Y-%m-%d %H:%M:%S'),
             "dlcs": [str(x) for x in (dlcs or [])],
@@ -3098,6 +3136,20 @@ class PanSearchResultsDialog(MessageBoxBase):
                 row.addStretch(1)
                 inner_layout.addLayout(row)
 
+            # 站点直链（如 GalgameBox，需浏览器打开，爬虫无法直接下载）
+            for d in (res.get('direct') or [])[:2]:
+                row = QHBoxLayout()
+                url = d.get('url', '')
+                btn = PushButton("打开直链")
+                btn.clicked.connect(lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
+                row.addWidget(btn)
+                if d.get('size'):
+                    size_label = CaptionLabel(d['size'])
+                    size_label.setTextColor("#909399", "#909399")
+                    row.addWidget(size_label)
+                row.addStretch(1)
+                inner_layout.addLayout(row)
+
         inner_layout.addStretch(1)
         scroll.setWidget(inner)
 
@@ -3306,17 +3358,30 @@ class HomePage(ScrollArea):
         self._name_worker.start()
 
     def _update_card_info(self, info_result):
-        """用后台加载的信息更新已显示的卡片（仅名称）"""
+        """用后台加载的信息更新已显示的卡片（仅名称），并把补到的真实名回填已入库记录（不覆盖非空名）"""
         if not info_result:
             return
-        
+
         name_map = info_result.get('names', {})
-        
+
+        # 回填已入库记录：只填空名/占位名的记录，非空名一律不动
+        records = _load_installed_records()
+        changed = False
+        for rec in records:
+            aid = str(rec.get('appid', '')).strip()
+            new_name = name_map.get(aid)
+            if new_name and _is_placeholder_name(rec.get('name', '')) and not _is_placeholder_name(new_name):
+                rec['name'] = new_name
+                changed = True
+        if changed:
+            _save_installed_records(records)
+            self._record_map = {str(r.get('appid', '')): r for r in records}
+
         for card in self.game_cards:
             appid = getattr(card, 'appid', None)
             if not appid:
                 continue
-            
+
             # 更新名称
             if appid in name_map:
                 name = name_map[appid]
@@ -3749,8 +3814,9 @@ class HomePage(ScrollArea):
             # 显示所有游戏
             self.display_games(self.all_games_data)
 
-            # 后台加载缺失的游戏名称
-            self._load_missing_names(files_data)
+            # 后台加载缺失的游戏名称（传合并数据，覆盖只在已入库记录里的游戏）
+            merged_entries = [g for _, g in self.all_games_data]
+            self._load_missing_names({'all': merged_entries})
                 
         except Exception as e:
             self.stats_label.setText(f"{tr('data_process_failed')}: {str(e)}")
@@ -3772,8 +3838,8 @@ class HomePage(ScrollArea):
             game_name = game.get('game_name', '')
             mode = game.get('mode', 'auto')  # 获取版本模式信息
 
-            # 如果游戏名称为空或显示为"名称未找到"，显示更友好的提示
-            if not game_name or game_name in ('名称未找到', '获取失败', tr('name_not_found'), tr('fetch_failed')):
+            # 如果游戏名称为空或为失败占位，显示更友好的提示
+            if _is_placeholder_name(game_name):
                 game_name = f"AppID {appid}"
 
             # 已入库记录中的来源
@@ -4703,6 +4769,14 @@ class PanResultCard(CardWidget):
         self.infoLabel = CaptionLabel("下载站手动下载", self)
         self.infoLabel.setTextColor("#ff9800", "#ff9800")
 
+        # 直链数量提示（GalgameBox 站点直链，需浏览器打开）
+        self.directLabel = None
+        directs = game.get('direct') or []
+        if directs:
+            sizes = '，'.join(d.get('size', '') for d in directs[:3] if d.get('size'))
+            self.directLabel = CaptionLabel(f"直链 {len(directs)} 个" + (f"（{sizes}）" if sizes else ""), self)
+            self.directLabel.setTextColor("#909399", "#909399")
+
         # 解压密码标注（CA 游戏详情 notice）
         self.noticeLabel = None
         notice = game.get('notice', '')
@@ -4714,6 +4788,8 @@ class PanResultCard(CardWidget):
         self.vBoxLayout.setSpacing(4)
         self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addWidget(self.infoLabel)
+        if self.directLabel:
+            self.vBoxLayout.addWidget(self.directLabel)
         if self.noticeLabel:
             self.vBoxLayout.addWidget(self.noticeLabel)
 
@@ -4732,7 +4808,7 @@ class PanResultCard(CardWidget):
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addWidget(self.openButton)
         self.hBoxLayout.addWidget(self.viewButton)
-        self.setFixedHeight(96 if self.noticeLabel else 80)
+        self.setFixedHeight(112 if (self.noticeLabel or self.directLabel) else 80)
 
     def _show_resources(self):
         """弹下载资源对话框（CA 游戏惰性加载详情）"""
@@ -4793,6 +4869,7 @@ class PanResultCard(CardWidget):
             'baidu': game.get('baidu', []),
             'quark': game.get('quark', []),
             'xunlei': game.get('xunlei', []),
+            'direct': game.get('direct', []),
             'notice': game.get('notice', ''),
         }], self.window())
         dialog.exec()
@@ -5724,10 +5801,10 @@ class SearchPage(ScrollArea):
             duration=2000
         )
 
-    async def _run_pan_search(self, appid, game_name):
+    async def _run_pan_search(self, appid, game_name, game_name_en=None):
         """后台执行搜索（在 worker 线程）"""
         from backend.pan_search_backend import search_game_downloads
-        return search_game_downloads(str(game_name or ''), str(game_name or ''), str(appid))
+        return search_game_downloads(str(game_name or ''), str(game_name_en or game_name or ''), str(appid))
 
     @pyqtSlot(object)
     def _on_pan_search_done(self, results):
@@ -5766,6 +5843,7 @@ class SearchPage(ScrollArea):
             'baidu': r.get('baidu', []),
             'quark': r.get('quark', []),
             'xunlei': r.get('xunlei', []),
+            'direct': r.get('direct', []),
             'gid': r.get('gid', ''),
             'slug': r.get('slug', ''),
             'notice': r.get('notice', ''),
@@ -5791,18 +5869,18 @@ class SearchPage(ScrollArea):
 
     def _search_pan_sites(self, query, results):
         """勾选「搜下载站」时：后台搜索下载站并混入结果列表"""
-        # 取第一个结果的名称作为关键词（优先英文名）
-        kw = ''
+        # 主关键词用用户输入原词（单字/别名场景 Steam 名反而搜不到），Steam 结果名作第二关键词
+        steam_name = ''
         for g in results:
             name = str(g.get('name', ''))
             if name and name not in ('名称未找到', '获取失败'):
-                kw = name
+                steam_name = name
                 break
-        if not kw:
-            kw = query
+        if not steam_name:
+            steam_name = query
 
         _replace_worker(getattr(self, 'pan_search_worker', None))
-        self.pan_search_worker = AsyncWorker(self._run_pan_search('', kw))
+        self.pan_search_worker = AsyncWorker(self._run_pan_search('', query, steam_name))
         self.pan_search_worker.result_ready.connect(self._append_pan_cards)
         self.pan_search_worker.error.connect(self._on_pan_search_error)
         self.pan_search_worker.finished.connect(self.pan_search_worker.deleteLater)
@@ -5895,6 +5973,10 @@ class SearchPage(ScrollArea):
     
     async def _search_appid(self, appid: str):
         """搜索 AppID（数字输入：先精确查该 AppID 游戏信息，失败再按名称搜索）"""
+        # 0. 已入库记录优先：本地精确命中（如 33 → 光与影：33号远征队）不依赖在线 API
+        local = _match_installed_records(appid)
+        if local:
+            return {'type': 'games', 'results': local}
         async with CaiBackend() as backend:
             await backend.initialize()
             lang = get_steam_lang(current_language)
@@ -5909,19 +5991,23 @@ class SearchPage(ScrollArea):
             # 2. 按名称搜索（如 "33" → 光与影：33号远征队）
             results = await backend.find_appid_by_name(appid, lang)
             return {'type': 'games', 'results': results}
-    
+
     async def _search_games(self, query: str):
-        """搜索游戏名称"""
+        """搜索游戏名称（本地已入库记录优先，再合并在线结果去重）"""
+        # 本地已入库记录：离线也能命中（appid 精确 / 名称子串）
+        local = _match_installed_records(query)
         # 创建后端实例（与其他页面保持一致）
         async with CaiBackend() as backend:
             await backend.initialize()
-            
+
             # 获取当前语言设置（使用全局变量）
             lang = get_steam_lang(current_language)
-            
+
             # 调用后端搜索功能
             results = await backend.find_appid_by_name(query, lang)
-            return {'type': 'games', 'results': results}
+            seen = {str(r.get('appid', '')) for r in local}
+            merged = local + [r for r in results if str(r.get('appid', '')) not in seen]
+            return {'type': 'games', 'results': merged}
     
     def notify_theme_changed(self):
         """通知所有搜索结果卡片主题已变化"""
@@ -5956,7 +6042,7 @@ class SearchPage(ScrollArea):
                 return
             if result.get('type') == 'appid':
                 # 直接是 AppID，自动开始入库
-                self.unlock_game_direct(result.get('appid'), None)
+                self.unlock_game_direct(result.get('appid'), result.get('name'))
             else:
                 results = result.get('results') or []
                 if not results:
@@ -6207,6 +6293,15 @@ class SearchPage(ScrollArea):
         """直接入库游戏（新的直接入库方法）"""
         if not appid:
             return
+
+        # 名字为空/占位时，尝试从已有记录找真实名（避免写空名导致主页显示 AppID）
+        if _is_placeholder_name(game_name):
+            for rec in _load_installed_records():
+                if str(rec.get('appid', '')) == str(appid) and not _is_placeholder_name(rec.get('name', '')):
+                    game_name = rec['name']
+                    break
+            else:
+                game_name = None
 
         # 去重检查：已入库（记录中或清单文件已存在）则提示，但仍允许重新入库
         existing = _get_existing_install_status(appid)
