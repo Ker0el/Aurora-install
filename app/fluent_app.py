@@ -2116,6 +2116,21 @@ def _remove_installed_record(appid):
         pass
 
 
+def _clean_markdown(text: str) -> str:
+    """剥离 release notes 里的 markdown 标记，供 Qt 弹窗纯文本显示"""
+    if not text:
+        return ""
+    import re
+    s = text.replace('\r\n', '\n')
+    s = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', s)          # 图片
+    s = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', s)       # 链接 → 只留文字
+    s = re.sub(r'[*_`~]{1,2}', '', s)                    # 粗体/斜体/行内代码
+    s = re.sub(r'^\s*(#{1,6})\s*', '', s, flags=re.M)    # 标题
+    s = re.sub(r'^\s*[-*+]\s+', '• ', s, flags=re.M)     # 无序列表
+    s = re.sub(r'^\s*>\s?', '', s, flags=re.M)           # 引用
+    return s.strip()
+
+
 def _is_placeholder_name(name) -> bool:
     """判断名字是否为空/已知失败占位（'AppID x' 形式）"""
     if not name or not str(name).strip():
@@ -8683,7 +8698,7 @@ class SettingsPage(ScrollArea):
                     tr("update_available"),
                     f"{tr('current_version')}: {info.get('current_version', '')}\n"
                     f"{tr('latest_version')}: {info.get('latest_version', '')}\n\n"
-                    f"{info.get('release_body', '') or tr('no_release_notes')}",
+                    f"{_clean_markdown(info.get('release_body', '')) or tr('no_release_notes')}",
                     self.window()
                 )
                 msg.yesButton.setText(tr("go_to_download"))
@@ -8731,10 +8746,11 @@ class SettingsPage(ScrollArea):
             import os
             is_cn = os.environ.get('IS_CN', '').lower() == 'yes'
             
-            # 如果有版本号，直接生成下载链接
+            # 如果有版本号，直接生成下载链接（GitHub tag 带 v 前缀，需补回）
             if latest_version:
-                # 生成具体的下载链接格式：https://github.com/Ker0el/Aurora-install/releases/download/{version}/AuroraInstall.exe
-                download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{latest_version}/AuroraInstall.exe"
+                tag = latest_version if latest_version.startswith('v') else f"v{latest_version}"
+                # 生成具体的下载链接格式：https://github.com/Ker0el/Aurora-install/releases/download/v1.8.2/AuroraInstall.exe
+                download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/AuroraInstall.exe"
                 
                 if is_cn:
                     # 中国大陆用户使用镜像
@@ -9542,7 +9558,7 @@ class MainWindow(MSFluentWindow):
                     tr("update_available"),
                     f"{tr('current_version')}: {info.get('current_version', '')}\n"
                     f"{tr('latest_version')}: {info.get('latest_version', '')}\n\n"
-                    f"{info.get('release_body', '') or tr('no_release_notes')}",
+                    f"{_clean_markdown(info.get('release_body', '')) or tr('no_release_notes')}",
                     self
                 )
                 msg.yesButton.setText(tr("go_to_download"))
