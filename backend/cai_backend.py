@@ -1127,9 +1127,11 @@ class CaiBackend:
             for target_dir in target_dirs:
                 try:
                     path = target_dir / filename
-                    if path.exists() and path.is_file():
+                    try:
                         os.remove(path)
                         removed += 1
+                    except FileNotFoundError:
+                        removed += 1  # 文件已不存在，视为已删除（幂等）
                 except Exception as e:
                     self.log.warning(f"删除记录的清单文件失败 {filename}: {e}")
         records.pop(app_id, None)
@@ -1152,9 +1154,11 @@ class CaiBackend:
         for candidate in candidates:
             try:
                 path = backup_dir / candidate
-                if path.exists() and path.is_file():
+                try:
                     os.remove(path)
                     removed += 1
+                except FileNotFoundError:
+                    pass  # 备份已不存在，无需处理
             except Exception as e:
                 self.log.warning(f"删除备份文件失败 {candidate}: {e}")
         return removed
@@ -1203,14 +1207,19 @@ class CaiBackend:
                                     for cache_path in depotcache_paths:
                                         if cache_path.exists():
                                             for mf in cache_path.glob(f'*_{gid}.manifest'):
-                                                if mf.exists():
+                                                try:
                                                     os.remove(mf)
                                                     manifests_deleted_count += 1
+                                                except FileNotFoundError:
+                                                    pass  # 文件已被外部进程删除，视为已达成目标
                             except Exception as e:
                                 self.log.error(f"清理 {filename} 的清单时失败: {e}")
-                        
-                        os.remove(file_path)
-                        deleted_count += 1
+
+                        try:
+                            os.remove(file_path)
+                            deleted_count += 1
+                        except FileNotFoundError:
+                            deleted_count += 1  # 文件已不存在，视为删除成功（幂等）
 
                 # 步骤3: 清理 backup 目录，防止刷新时自动恢复
                 backup_deleted_count += self._remove_backup_files_for_item(file_type, filename, appid)
