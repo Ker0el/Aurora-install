@@ -2151,16 +2151,17 @@ def _is_placeholder_name(name) -> bool:
 
 
 def _cover_urls(appid):
-    """候选封面 URL：老格式 CDN 优先，失败再爬商店页 hash。"""
+    """候选封面 URL：老格式 CDN 优先，失败再走 hash 链路。"""
     yield f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
     yield f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
 
 
 def _fetch_cover_data(appid):
-    """httpx 直连优先 + 系统代理兜底下载封面图片；404 时爬商店页拿 hash 封面。返回 bytes 或 None"""
+    """封面下载：老格式 CDN 直连 → steamcmd hash 链路（代理拿 hash + fastly 直连）→ 商店页兜底。返回 bytes 或 None"""
     import httpx
     import re
     UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # 1. 老格式 CDN 直连（老游戏直接命中）
     for url in _cover_urls(appid):
         try:
             r = httpx.get(url, headers=UA, timeout=8)
@@ -2168,7 +2169,26 @@ def _fetch_cover_data(appid):
                 return r.content
         except Exception:
             pass
-    # 商店页爬 hash 封面（走代理）
+    # 2. steamcmd hash 链路：代理拿 hash → fastly 直连下载（新游戏根治）
+    try:
+        from backend.pan_search_backend import _http_get
+        r = _http_get(f"https://api.steamcmd.net/v1/info/{appid}", timeout=10)
+        if r is not None:
+            common = (r.json().get('data', {}) or {}).get(appid, {}).get('common', {}) or {}
+            hi = common.get('header_image', '')
+            hash_path = (hi.get('english') if isinstance(hi, dict) else hi) or ''
+            if hash_path:
+                fastly_url = f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/{hash_path}"
+                for _ in range(2):  # fastly 偶发抖动，重试
+                    try:
+                        r2 = httpx.get(fastly_url, headers=UA, timeout=12)
+                        if r2.status_code == 200 and r2.content:
+                            return r2.content
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    # 3. 商店页爬 hash 封面（最后兜底）
     try:
         r = httpx.get(f"https://store.steampowered.com/app/{appid}/", headers=UA, timeout=8)
         m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', r.text)

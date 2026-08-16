@@ -218,6 +218,22 @@ class CaiBackend:
             pass
         return None
 
+    async def _get_fallback_proxy_first(self, url: str, headers: dict = None, timeout: float = 10) -> httpx.Response | None:
+        """代理优先（steamcmd.net 等域名在用户环境走代理稳定），失败直连兜底。"""
+        try:
+            r = await self.proxy_client.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                return r
+        except Exception:
+            pass
+        try:
+            r = await self.client.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                return r
+        except Exception:
+            pass
+        return None
+
     def _init_log(self, level=logging.INFO) -> logging.Logger:
         logger = logging.getLogger('Aurora Install')
         logger.setLevel(level)
@@ -810,9 +826,9 @@ class CaiBackend:
         except Exception as e:
             self.log.debug(f"steamCMD API 获取 AppID {appid} 名称失败，尝试官方API: {e}")
 
-        # 备用：SteamCMD API (api.steamcmd.net，实测可用)
+        # SteamCMD API (api.steamcmd.net，用户环境代理稳定，直连超时)：代理优先
         try:
-            r = await self._get_fallback(
+            r = await self._get_fallback_proxy_first(
                 f"https://api.steamcmd.net/v1/info/{appid}",
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
                 timeout=15
@@ -993,13 +1009,13 @@ class CaiBackend:
         if not missing:
             return {}
 
-        # 批量获取：每 20 个一组走 appdetails 批量接口（快 3 倍以上），失败组内 appid 用单发兜底
+        # 批量获取：每 20 个一组走 appdetails 批量接口，失败组内单发兜底
         missing_list = sorted(missing)
         groups = [missing_list[i:i + 20] for i in range(0, len(missing_list), 20)]
 
         async def _fetch_group(group):
             batch = await self._fetch_names_batch(group, lang)
-            # 批量失败的 appid 单发兜底
+            # 批量失败的 appid 单发兜底（steamcmd 代理优先，用户环境最稳）
             for appid in group:
                 if appid not in batch:
                     name = await self._fetch_game_name_for_manager(appid, lang)
@@ -1008,8 +1024,8 @@ class CaiBackend:
             return batch
 
         group_tasks = [asyncio.ensure_future(_fetch_group(g)) for g in groups]
-        # 最多等 8 秒，返回已完成部分；未完成的取消（下次刷新再补）
-        done, pending = await asyncio.wait(group_tasks, timeout=8)
+        # 最多等 10 秒，返回已完成部分；未完成的取消（下次刷新再补）
+        done, pending = await asyncio.wait(group_tasks, timeout=10)
         name_map = {}
         for task in done:
             try:
