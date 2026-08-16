@@ -1935,6 +1935,11 @@ _NEW_FEATURE_TEXTS = {
         "source_buqiuren": "清单不求人",
         "source_sac_other": "SAC分流",
         "source_custom": "自定义ZIP",
+        "delete_unlock_only": "只删解锁",
+        "delete_unlock_only_hint": "只移除解锁文件与记录，游戏本体保留",
+        "delete_with_game": "删除游戏本体",
+        "delete_with_game_hint": "同时卸载 Steam 游戏（删除游戏目录与清单），请先关闭 Steam",
+        "delete_confirm_message": "确定要删除 AppID {0} 吗？\n\n① 只删解锁：移除解锁文件与记录，游戏本体保留\n② 删除游戏本体：同时卸载 Steam 游戏目录与清单\n\n此操作不可撤销。",
     },
     "en_US": {
         "already_installed": "AppID {0} already in library ({1}), skipped",
@@ -2023,6 +2028,11 @@ _NEW_FEATURE_TEXTS = {
         "source_buqiuren": "BuQiuren",
         "source_sac_other": "SAC Mirror",
         "source_custom": "Custom ZIP",
+        "delete_unlock_only": "Unlock Only",
+        "delete_unlock_only_hint": "Remove unlock files and records only, keep the game installed",
+        "delete_with_game": "Uninstall Game",
+        "delete_with_game_hint": "Also uninstall the Steam game (remove game directory & manifest), close Steam first",
+        "delete_confirm_message": "Delete AppID {0}?\n\n① Unlock Only: remove unlock files & records, keep the game\n② Uninstall Game: also remove the game directory & manifest\n\nThis cannot be undone.",
     },
 }
 for _lang, _keys in _NEW_FEATURE_TEXTS.items():
@@ -3959,42 +3969,51 @@ class HomePage(ScrollArea):
         self.display_games(self.all_games_data)
     
     def delete_game(self, appid, source_type):
-        """删除游戏"""
+        """删除游戏（双选项：只删解锁 / 删除游戏本体）"""
         # 显示确认对话框
         dialog = MessageBox(
             tr("confirm_delete"),
-            tr("delete_message", appid),
+            tr("delete_confirm_message", appid),
             self
         )
-        
-        if dialog.exec():
-            # 用户确认删除
-            async def _delete():
-                async with CaiBackend() as backend:
-                    await backend.initialize()
-                    
-                    # 构造删除项
-                    items = [{
-                        'appid': appid,
-                        'filename': f'{appid}.lua' if source_type in ('st', 'ost') else f'{appid}.txt'
-                    }]
-                    
-                    result = backend.delete_managed_files(source_type, items)
-                    return result
-            
-            _replace_worker(getattr(self, 'delete_worker', None))
-            self.delete_worker = AsyncWorker(_delete())
-            self.delete_worker.result_ready.connect(lambda result: self.on_delete_complete(result, appid))
-            self.delete_worker.error.connect(self.on_delete_error)
-            self.delete_worker.finished.connect(self.delete_worker.deleteLater)
-            self.delete_worker.start()
-            
-            InfoBar.info(
-                title=tr("deleting"),
-                content=f"{tr('deleting')} AppID {appid}...",
-                parent=self.window(),
-                position=InfoBarPosition.TOP
-            )
+        dialog.yesButton.setText(tr("delete_with_game"))
+        dialog.cancelButton.setText(tr("delete_unlock_only"))
+        with_game = dialog.exec()
+
+        async def _delete(remove_game):
+            async with CaiBackend() as backend:
+                await backend.initialize()
+
+                # 构造删除项
+                items = [{
+                    'appid': appid,
+                    'filename': f'{appid}.lua' if source_type in ('st', 'ost') else f'{appid}.txt'
+                }]
+
+                result = backend.delete_managed_files(source_type, items)
+                if result.get('success') and remove_game:
+                    # 删除 Steam 游戏本体（游戏目录 + appmanifest + 着色器缓存）
+                    uninstall = backend.uninstall_game_files(appid)
+                    if not uninstall.get('success'):
+                        result['success'] = False
+                        result['message'] = result.get('message', '') + ' ' + uninstall.get('message', '')
+                    elif uninstall.get('removed_dirs') or uninstall.get('removed_manifests'):
+                        result['message'] = result.get('message', '') + ' ' + uninstall.get('message', '')
+                return result
+
+        _replace_worker(getattr(self, 'delete_worker', None))
+        self.delete_worker = AsyncWorker(_delete(with_game))
+        self.delete_worker.result_ready.connect(lambda result: self.on_delete_complete(result, appid))
+        self.delete_worker.error.connect(self.on_delete_error)
+        self.delete_worker.finished.connect(self.delete_worker.deleteLater)
+        self.delete_worker.start()
+
+        InfoBar.info(
+            title=tr("deleting"),
+            content=f"{tr('deleting')} AppID {appid}...",
+            parent=self.window(),
+            position=InfoBarPosition.TOP
+        )
     
     @pyqtSlot(object)
     def on_delete_complete(self, result, appid):

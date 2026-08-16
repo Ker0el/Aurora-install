@@ -1240,8 +1240,94 @@ class CaiBackend:
             message += f" 清理了 {backup_deleted_count} 个备份文件。"
         if failed:
             message += f" 失败条目: {', '.join(failed)}"
-        
+
         return {"success": not failed, "message": message}
+
+    def uninstall_game_files(self, appid) -> Dict:
+        """卸载 Steam 游戏本体：删除游戏目录、appmanifest 与着色器缓存（覆盖所有库路径）。
+
+        库路径来源：Steam 主目录 steamapps/libraryfolders.vdf 与主库目录本身，去重后逐个查找。
+        """
+        appid = str(appid)
+        if not appid.isdigit():
+            return {"success": False, "message": f"无效 AppID: {appid}"}
+
+        # 收集所有 Steam 库路径（去重）
+        library_dirs = []
+        try:
+            steamapps = self.steam_path / 'steamapps'
+            libraryfolders = steamapps / 'libraryfolders.vdf'
+            if libraryfolders.exists():
+                data = vdf.loads(libraryfolders.read_text(encoding='utf-8', errors='ignore'))
+                for k, v in (data.get('libraryfolders', {}) or {}).items():
+                    p = (v or {}).get('path') if isinstance(v, dict) else None
+                    if p:
+                        library_dirs.append(Path(p))
+        except Exception as e:
+            self.log.warning(f"读取 libraryfolders.vdf 失败: {e}")
+        # 主库一定参与扫描
+        library_dirs.append(self.steam_path)
+        seen = set()
+        library_dirs = [p for p in library_dirs if p and str(p) not in seen and not seen.add(str(p))]
+
+        removed_dirs, removed_manifests = [], []
+        for lib in library_dirs:
+            sa = lib / 'steamapps'
+            # appmanifest_<appid>.acf（先读 installdir，再删除）
+            acf = sa / f'appmanifest_{appid}.acf'
+            installdir = None
+            if acf.exists():
+                try:
+                    mdata = vdf.loads(acf.read_text(encoding='utf-8', errors='ignore'))
+                    installdir = (mdata.get('AppState', {}) or {}).get('installdir')
+                except Exception:
+                    pass
+                try:
+                    acf.unlink()
+                    removed_manifests.append(acf.name)
+                    self.log.info(f"[卸载] 已删除清单 {acf.name}")
+                except Exception as e:
+                    self.log.warning(f"[卸载] 删除清单失败 {acf.name}: {e}")
+            # 常见命名：installdir 已知 → 精确；未知 → 尝试 common 下按 appid 开头的目录
+            candidates = []
+            if installdir:
+                candidates.append(sa / 'common' / str(installdir))
+            else:
+                common = sa / 'common'
+                if common.exists():
+                    try:
+                        for d in common.iterdir():
+                            if d.is_dir() and (d.name.startswith(f"{appid}_") or d.name == appid):
+                                candidates.append(d)
+                    except Exception:
+                        pass
+            for cd in candidates:
+                if cd.exists() and cd.is_dir():
+                    try:
+                        import shutil
+                        shutil.rmtree(cd, ignore_errors=False)
+                        removed_dirs.append(cd.name)
+                        self.log.info(f"[卸载] 已删除游戏目录 {cd}")
+                    except Exception as e:
+                        self.log.warning(f"[卸载] 删除游戏目录失败 {cd}: {e}")
+            # 着色器缓存
+            shadercache = sa / 'shadercache' / appid
+            if shadercache.exists():
+                try:
+                    import shutil
+                    shutil.rmtree(shadercache, ignore_errors=True)
+                    self.log.info(f"[卸载] 已删除着色器缓存 {shadercache}")
+                except Exception as e:
+                    self.log.warning(f"[卸载] 删除着色器缓存失败: {e}")
+
+        msg = ""
+        if removed_dirs:
+            msg += f"已删除游戏目录: {', '.join(removed_dirs)}。"
+        if removed_manifests:
+            msg += f"已删除清单: {', '.join(removed_manifests)}。"
+        if not removed_dirs and not removed_manifests:
+            msg = "未找到该游戏的安装文件（可能未安装或已卸载）。"
+        return {"success": True, "message": msg, "removed_dirs": removed_dirs, "removed_manifests": removed_manifests}
 
     async def toggle_st_version(self, filename: str, file_type: str = "st") -> Dict:
         """切换ST文件版本模式（自动更新/固定版本）"""
