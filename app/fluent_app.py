@@ -2450,6 +2450,17 @@ class GameCard(CardWidget):
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(reply):
+                try:
+                    reply.deleteLater()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
         ok = False
         url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
@@ -2712,6 +2723,17 @@ class GameCardGrid(CardWidget):
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(reply):
+                try:
+                    reply.deleteLater()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
         ok = False
         url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
@@ -3112,18 +3134,28 @@ class AsyncWorker(QThread):
                     if not self._loop.is_closed():
                         self._loop.close()
                 except Exception:
-                    pass
+                    # loop 关闭异常（如 httpx 连接未释放）不能上抛，否则 Qt6Core fast fail 崩溃
+                    try:
+                        if not self._loop.is_closed():
+                            self._loop.close()
+                    except Exception:
+                        pass
                 finally:
                     self._loop = None
 
 
 def _replace_worker(old_worker):
-    """安全停止旧 worker，等待线程真正结束后返回。"""
+    """安全停止旧 worker，带超时兜底（防止卡在 httpx 请求上导致 GUI 死锁）。"""
     if old_worker is not None:
         try:
             if old_worker.isRunning():
                 old_worker.cancel()
-                old_worker.wait()
+                if not old_worker.wait(3000):  # 3s 超时，避免无限等待
+                    try:
+                        old_worker.terminate()  # 兜底强杀
+                        old_worker.wait(1000)
+                    except Exception:
+                        pass
             old_worker.deleteLater()
         except RuntimeError:
             pass
@@ -3440,12 +3472,20 @@ class HomePage(ScrollArea):
 
         _replace_worker(getattr(self, '_name_worker', None))
         self._name_worker = AsyncWorker(_fetch())
-        self._name_worker.result_ready.connect(lambda result: self._update_card_info(result))
+        self._name_worker.result_ready.connect(
+            lambda result, page=self: page._update_card_info(result))
         self._name_worker.finished.connect(self._name_worker.deleteLater)
         self._name_worker.start()
 
     def _update_card_info(self, info_result):
         """用后台加载的信息更新已显示的卡片（仅名称），并把补到的真实名回填已入库记录（不覆盖非空名）"""
+        # 防闪退：页面可能已关闭，访问已销毁的 C++ 对象会致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
         if not info_result:
             return
 
@@ -3850,6 +3890,13 @@ class HomePage(ScrollArea):
     def on_games_loaded(self, result):
         """游戏加载完成"""
         try:
+            # 防闪退：页面可能已关闭，访问已销毁的 C++ 对象会致命崩溃
+            try:
+                from PyQt6 import sip
+                if sip.isdeleted(self):
+                    return
+            except Exception:
+                pass
             # 兼容 dict（含 unlocker_type）或旧结构
             if isinstance(result, dict):
                 files_data = result.get('files_data') or {}
@@ -4552,6 +4599,17 @@ class SearchResultCard(CardWidget):
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(reply):
+                try:
+                    reply.deleteLater()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
         ok = False
         url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
@@ -4780,6 +4838,17 @@ class SearchResultCardGrid(CardWidget):
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
+        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(reply):
+                try:
+                    reply.deleteLater()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
         ok = False
         url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
@@ -9572,12 +9641,12 @@ class MainWindow(MSFluentWindow):
         # 根据配置切换到默认界面
         self.switch_to_default_page()
 
-        # 启动后台预构建设置页 UI，避免首次点击卡顿
+        # 启动后台预构建设置页 UI（延迟避开启动 worker 高峰，防 Qt 崩溃）
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(1500, self._prebuild_settings)
+        QTimer.singleShot(6000, self._prebuild_settings)
 
-        # 延迟自动检查更新（可在设置中关闭）
-        QTimer.singleShot(3000, self._auto_check_update)
+        # 延迟自动检查更新（默认关闭，可在设置中开启）
+        QTimer.singleShot(10000, self._auto_check_update)
 
     def closeEvent(self, event):
         """窗口关闭：统一停止所有后台 worker 线程，避免 PyInstaller 退出时
@@ -9660,7 +9729,7 @@ class MainWindow(MSFluentWindow):
                 import json
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                if not config.get("auto_check_update", True):
+                if not config.get("auto_check_update", False):  # 默认关闭，避免启动期网络 worker 引发崩溃
                     return
         except Exception:
             return
