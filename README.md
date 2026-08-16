@@ -18,14 +18,20 @@ Steam 游戏入库工具 — **什么游戏都能搜到，一键入库即玩**
 
 | | |
 |---|---|
-| 🔍 **全网搜下载** | 对接多个下载站 API（百度网盘 / 夸克 / 迅雷直链），Steam 搜不到？下载站兜底，**什么游戏都能搜到** |
 | 🎮 **多清单源入库** | 内置 SWA V2、Cysaw、Walftech、Sudama、MHub、GitHub 仓库等多种清单源，自动调度 |
+| 🔍 **全网搜下载** | 对接多个下载站 API，Steam 搜不到？下载站兜底，**什么游戏都能搜到** |
 | 🔓 **多解锁器** | 自动检测 SteamTools / OpenSteamTools / GreenLuma，一键初始化，开箱即用 |
 | 🧰 **内置工具** | 修改器搜索下载（自动解压）、免 Steam 启动（Goldberg）、联机启动模式 |
 | ⚡ **批量入库** | 多选游戏一键排队入库，实时进度反馈，自动去重（含 DLC） |
 | 🗑️ **一键删除** | 自动清理解锁文件、清单文件与备份，干净利落 |
 | 💾 **本地备份恢复** | 一键备份 / 还原入库数据与清单文件 |
 | 🎨 **Fluent Design** | Windows 11 风格界面，深色 / 浅色主题 + 自定义主题色，8 种语言 |
+
+## 📥 安装
+
+### 直接下载
+
+从 [Releases](https://github.com/Ker0el/Aurora-install/releases) 下载 `AuroraInstall.exe`，双击运行，无需安装任何环境。
 
 ## 🚀 快速开始
 
@@ -36,21 +42,6 @@ Steam 游戏入库工具 — **什么游戏都能搜到，一键入库即玩**
 3. **开玩** — 打开 Steam 客户端，游戏已出现在仓库中，直接下载游玩
 
 > 之后每次入库新游戏都只需第 2、3 步；删除游戏在主页卡片右键即可一键清理。
-
-## 📥 安装
-
-### 方式一：直接下载（推荐）
-
-从 [Releases](https://github.com/Ker0el/Aurora-install/releases) 下载 `AuroraInstall.exe`，双击运行，无需安装任何环境。
-
-### 方式二：手动运行
-
-```bash
-pip install -r requirements.txt
-python main.py
-```
-
-> 国内网络可在 pip 后追加 `-i https://pypi.tuna.tsinghua.edu.cn/simple` 加速。
 
 ## ⚠️ 免责声明
 
