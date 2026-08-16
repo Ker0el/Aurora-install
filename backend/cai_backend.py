@@ -201,16 +201,15 @@ class CaiBackend:
             await self.proxy_client.aclose()
 
     async def _get_fallback(self, url: str, headers: dict = None, timeout: float = 10) -> httpx.Response | None:
-        """直连优先（快速超时），失败自动走系统代理重试（完整超时）。"""
-        # 直连：短暂等待，快速失败后切代理
-        try:
-            direct_timeout = min(timeout, 4)
-            r = await self.client.get(url, headers=headers, timeout=direct_timeout)
-            if r.status_code == 200:
-                return r
-        except Exception:
-            pass
-        # 代理：完整超时重试
+        """直连优先（重试 2 次），失败走系统代理兜底。直连在用户环境更稳（代理 TLS 反而被重置）。"""
+        for attempt in range(2):
+            try:
+                r = await self.client.get(url, headers=headers, timeout=timeout)
+                if r.status_code == 200:
+                    return r
+            except Exception:
+                pass
+        # 代理兜底
         try:
             r = await self.proxy_client.get(url, headers=headers, timeout=timeout)
             if r.status_code == 200:
@@ -854,6 +853,32 @@ class CaiBackend:
         self._name_fetch_failures[appid] = time.time()  # 冷却期内不重复请求
         return f"AppID {appid}"
 
+    async def _fetch_names_batch(self, appids: List[str], lang: str = "schinese") -> Dict[str, str]:
+        """批量获取游戏名称（appdetails 重复参数接口，一次拿多个，远快于逐个请求）。
+
+        返回 {appid: name}，写入 name_cache。
+        """
+        result_map = {}
+        if not appids:
+            return result_map
+        try:
+            url = ("https://store.steampowered.com/api/appdetails?l=" + lang + "&"
+                   + "&".join(f"appids={a}" for a in appids))
+            r = await self._get_fallback(url, headers={'User-Agent': 'Aurora-Install-Manager/1.0'}, timeout=12)
+            if r is not None:
+                data = r.json()
+                for appid in appids:
+                    app_data = data.get(str(appid), {})
+                    if app_data.get("success") and "data" in app_data:
+                        game_name = app_data["data"].get("name", "")
+                        if game_name:
+                            cache_key = f"{appid}_{lang}"
+                            self.name_cache[cache_key] = game_name
+                            result_map[str(appid)] = game_name
+        except Exception as e:
+            self.log.debug(f"批量获取名称失败 {len(appids)} 个: {e}")
+        return result_map
+
     # --- 联机游戏启动配置管理 ---
 
     async def get_launcher_profiles(self) -> List[Dict]:
@@ -968,14 +993,27 @@ class CaiBackend:
         if not missing:
             return {}
 
-        task_map = {asyncio.ensure_future(self._fetch_game_name_for_manager(appid, lang)): appid for appid in missing}
+        # 批量获取：每 20 个一组走 appdetails 批量接口（快 3 倍以上），失败组内 appid 用单发兜底
+        missing_list = sorted(missing)
+        groups = [missing_list[i:i + 20] for i in range(0, len(missing_list), 20)]
+
+        async def _fetch_group(group):
+            batch = await self._fetch_names_batch(group, lang)
+            # 批量失败的 appid 单发兜底
+            for appid in group:
+                if appid not in batch:
+                    name = await self._fetch_game_name_for_manager(appid, lang)
+                    if name and not name.startswith("AppID"):
+                        batch[appid] = name
+            return batch
+
+        group_tasks = [asyncio.ensure_future(_fetch_group(g)) for g in groups]
         # 最多等 8 秒，返回已完成部分；未完成的取消（下次刷新再补）
-        done, pending = await asyncio.wait(task_map.keys(), timeout=8)
+        done, pending = await asyncio.wait(group_tasks, timeout=8)
         name_map = {}
         for task in done:
-            appid = task_map[task]
             try:
-                name_map[appid] = task.result()
+                name_map.update(task.result())
             except Exception:
                 pass
         for task in pending:

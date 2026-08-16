@@ -14,11 +14,7 @@ from PyQt6.QtGui import QIntValidator
 from PyQt6.QtGui import QIcon, QPixmap, QFont, QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply, QNetworkProxy
 
-# Qt 网络默认不走系统代理（大陆访问 Steam CDN 直连被墙），统一启用系统代理
-try:
-    QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.ProxyType.DefaultProxy))
-except Exception:
-    pass
+# Qt 网络用直连（CDN 有国内节点，直连更稳；系统代理对 Steam 域名 TLS 反而被重置）
 from qfluentwidgets import (
     FluentIcon, NavigationItemPosition, MessageBox,
     setTheme, Theme, setThemeColor, isDarkTheme,
@@ -2154,6 +2150,48 @@ def _is_placeholder_name(name) -> bool:
             or s.lower().startswith('appid '))
 
 
+def _cover_urls(appid):
+    """候选封面 URL：老格式 CDN 优先，失败再爬商店页 hash。"""
+    yield f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+    yield f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
+
+
+def _fetch_cover_data(appid):
+    """httpx 直连优先 + 系统代理兜底下载封面图片；404 时爬商店页拿 hash 封面。返回 bytes 或 None"""
+    import httpx
+    import re
+    UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for url in _cover_urls(appid):
+        try:
+            r = httpx.get(url, headers=UA, timeout=8)
+            if r.status_code == 200 and r.content:
+                return r.content
+        except Exception:
+            pass
+    # 商店页爬 hash 封面（走代理）
+    try:
+        r = httpx.get(f"https://store.steampowered.com/app/{appid}/", headers=UA, timeout=8)
+        m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', r.text)
+        if m:
+            r2 = httpx.get(m.group(1), headers=UA, timeout=10)
+            if r2.status_code == 200 and r2.content:
+                return r2.content
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_cover_data_worker(appid, callback):
+    """在后台线程下载封面，完成后回调（避免阻塞 GUI）"""
+    import threading
+
+    def _run():
+        data = _fetch_cover_data(appid)
+        if data:
+            callback(appid, data)
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _sanitize_record_name(appid, name):
     """占位名不写入记录；若记录已有真实名则保留旧名（不降级）；否则留空等补名回填"""
     if not _is_placeholder_name(name):
@@ -2484,9 +2522,10 @@ class GameCard(CardWidget):
             self._cover_fallback = True
             self.load_cover()
         elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -2498,6 +2537,30 @@ class GameCard(CardWidget):
                 parent = parent.parent()
             if parent:
                 parent.delete_game(self.appid, self.source_type)
+
+    def _on_cover_data_ready(self, appid, data):
+        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
+        if str(appid) != str(self.appid):
+            return
+
+        def _apply():
+            try:
+                from PyQt6 import sip
+                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
+                    return
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.coverLabel.setPixmap(pixmap)
+            except Exception:
+                pass
+        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
     
     def update_mode_label(self, is_fixed):
         """更新版本模式标签"""
@@ -2757,9 +2820,10 @@ class GameCardGrid(CardWidget):
             self._cover_fallback = True
             self.load_cover()
         elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -2771,6 +2835,30 @@ class GameCardGrid(CardWidget):
                 parent = parent.parent()
             if parent:
                 parent.delete_game(self.appid, self.source_type)
+
+    def _on_cover_data_ready(self, appid, data):
+        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
+        if str(appid) != str(self.appid):
+            return
+
+        def _apply():
+            try:
+                from PyQt6 import sip
+                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
+                    return
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.coverLabel.setPixmap(pixmap)
+            except Exception:
+                pass
+        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
 
     def on_toggle_clicked(self):
         """版本切换按钮点击"""
@@ -4108,51 +4196,41 @@ class HomePage(ScrollArea):
         self.display_games(self.all_games_data)
     
     def delete_game(self, appid, source_type):
-        """删除游戏（双选项：只删解锁 / 删除游戏本体）"""
+        """删除游戏：只移除解锁文件与已入库记录，游戏本体保留"""
         # 显示确认对话框
         dialog = MessageBox(
             tr("confirm_delete"),
-            tr("delete_confirm_message", appid),
+            tr("delete_message", appid),
             self
         )
-        dialog.yesButton.setText(tr("delete_with_game"))
-        dialog.cancelButton.setText(tr("delete_unlock_only"))
-        with_game = dialog.exec()
 
-        async def _delete(remove_game):
-            async with CaiBackend() as backend:
-                await backend.initialize()
+        if dialog.exec():
+            async def _delete():
+                async with CaiBackend() as backend:
+                    await backend.initialize()
 
-                # 构造删除项
-                items = [{
-                    'appid': appid,
-                    'filename': f'{appid}.lua' if source_type in ('st', 'ost') else f'{appid}.txt'
-                }]
+                    # 构造删除项
+                    items = [{
+                        'appid': appid,
+                        'filename': f'{appid}.lua' if source_type in ('st', 'ost') else f'{appid}.txt'
+                    }]
 
-                result = backend.delete_managed_files(source_type, items)
-                if result.get('success') and remove_game:
-                    # 删除 Steam 游戏本体（游戏目录 + appmanifest + 着色器缓存）
-                    uninstall = backend.uninstall_game_files(appid)
-                    if not uninstall.get('success'):
-                        result['success'] = False
-                        result['message'] = result.get('message', '') + ' ' + uninstall.get('message', '')
-                    elif uninstall.get('removed_dirs') or uninstall.get('removed_manifests'):
-                        result['message'] = result.get('message', '') + ' ' + uninstall.get('message', '')
-                return result
+                    result = backend.delete_managed_files(source_type, items)
+                    return result
 
-        _replace_worker(getattr(self, 'delete_worker', None))
-        self.delete_worker = AsyncWorker(_delete(with_game))
-        self.delete_worker.result_ready.connect(lambda result: self.on_delete_complete(result, appid))
-        self.delete_worker.error.connect(self.on_delete_error)
-        self.delete_worker.finished.connect(self.delete_worker.deleteLater)
-        self.delete_worker.start()
+            _replace_worker(getattr(self, 'delete_worker', None))
+            self.delete_worker = AsyncWorker(_delete())
+            self.delete_worker.result_ready.connect(lambda result: self.on_delete_complete(result, appid))
+            self.delete_worker.error.connect(self.on_delete_error)
+            self.delete_worker.finished.connect(self.delete_worker.deleteLater)
+            self.delete_worker.start()
 
-        InfoBar.info(
-            title=tr("deleting"),
-            content=f"{tr('deleting')} AppID {appid}...",
-            parent=self.window(),
-            position=InfoBarPosition.TOP
-        )
+            InfoBar.info(
+                title=tr("deleting"),
+                content=f"{tr('deleting')} AppID {appid}...",
+                parent=self.window(),
+                position=InfoBarPosition.TOP
+            )
     
     @pyqtSlot(object)
     def on_delete_complete(self, result, appid):
@@ -4633,9 +4711,10 @@ class SearchResultCard(CardWidget):
             self._cover_fallback = True
             self.load_cover()
         elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
         reply.deleteLater()
 
     def on_select_clicked(self):
@@ -4647,11 +4726,35 @@ class SearchResultCard(CardWidget):
             if parent:
                 parent.unlock_game_direct(self.appid, self.game_name)
 
+    def _on_cover_data_ready(self, appid, data):
+        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
+        if str(appid) != str(self.appid):
+            return
+
+        def _apply():
+            try:
+                from PyQt6 import sip
+                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
+                    return
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.coverLabel.setPixmap(pixmap)
+            except Exception:
+                pass
+        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+
     def copy_cover(self):
         """复制封面URL到剪贴板"""
         cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         QApplication.clipboard().setText(cover_url)
-        
+
         # 显示成功提示
         InfoBar.success(
             title="复制成功",
@@ -4872,9 +4975,10 @@ class SearchResultCardGrid(CardWidget):
             self._cover_fallback = True
             self.load_cover()
         elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_select_clicked(self):
@@ -4886,11 +4990,35 @@ class SearchResultCardGrid(CardWidget):
             if parent:
                 parent.unlock_game_direct(self.appid, self.game_name)
 
+    def _on_cover_data_ready(self, appid, data):
+        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
+        from PyQt6.QtCore import QMetaObject, Qt
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
+        if str(appid) != str(self.appid):
+            return
+
+        def _apply():
+            try:
+                from PyQt6 import sip
+                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
+                    return
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.coverLabel.setPixmap(pixmap)
+            except Exception:
+                pass
+        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+
     def copy_cover(self):
         """复制封面URL到剪贴板"""
         cover_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         QApplication.clipboard().setText(cover_url)
-        
+
         # 显示成功提示
         InfoBar.success(
             title="复制成功",
