@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Aurora Install（极光入库）— Python 3.8+ / PyQt6 桌面应用，Steam 游戏入库工具（解锁器：SteamTools / OpenSteamTools / GreenLuma）。UI 用 PyQt6-Fluent-Widgets。
+Aurora Install（极光入库）— Python 3.8+ / PyQt6 桌面应用，Steam 游戏入库工具（解锁器：SteamTools / OpenSteamTools / GreenLuma）。UI 用 PyQt6-Fluent-Widgets。已发布到 GitHub（Ker0el/Aurora-install），README 中英文 + Release 每版上传 exe。
 
 ## 常用命令
 
@@ -12,24 +12,28 @@ Aurora Install（极光入库）— Python 3.8+ / PyQt6 桌面应用，Steam 游
 # 开发模式运行
 python main.py
 
-# 单元测试（全部）
+# 单元测试（全部，无 PyQt6 依赖，sys.modules 注入 mock Qt）
 python -m unittest discover -s tests -v
 
-# 打包 exe（PyInstaller onefile，输出 dist/AuroraInstall.exe）
+# 打包 exe（PyInstaller onefile，输出 dist/AuroraInstall.exe，约 1 分钟）
 python build_exe.py
 ```
 
-打包前若 exe 被占用（程序运行中），先 `taskkill /F /IM AuroraInstall.exe` 并删除 `dist/AuroraInstall.exe`。打包后会自动跑 `backend/_insert_drm.py`（D加密），该脚本不存在时跳过（正常）。
+打包前若 exe 被占用（程序运行中），先 `taskkill /F /IM AuroraInstall.exe` 并删除 `dist/AuroraInstall.exe`。打包后会自动跑 `backend/_insert_drm.py`（D加密），该脚本不存在时跳过（正常）。**推送 GitHub 直连会被重置，必须走代理：`git -c http.proxy=http://127.0.0.1:7890 push origin main`**。发布用 `gh release create vX.Y.Z dist/AuroraInstall.exe --title ... --notes ...`。
+
+## ⚠️ 版本号（血泪教训）
+
+`backend/cai_backend.py` 顶部 `CURRENT_VERSION` 是 exe 内版本号。**每次发版必须同步改它并重新编译**——曾经 1.8.1/1.8.2 只改代码没改版本号，exe 自认 1.8，检测到线上 1.8.2 永远提示更新（死循环）。发布流程固定：改 `CURRENT_VERSION` → 单测 → 打包 → 提交推送 → `gh release create`。
 
 ## 架构
 
 - **入口** `main.py` → `app/fluent_app.py` 的 `MainWindow`（MSFluentWindow）
-- **UI** `app/fluent_app.py`（单文件约 9000 行，所有页面都在这里）：
+- **UI** `app/fluent_app.py`（单文件约 10000 行，所有页面都在这里）：
   - `HomePage`（已入库游戏主页，删除/初始化/版本切换）、`SearchPage`（搜索入库）、`LauncherPage`（联机）、`TrainerPage`（修改器）、`GbePage`（免 Steam 启动）、`SettingsPage`
   - 后台任务统一用 `AsyncWorker(QThread)` + `_replace_worker` 模式；关闭窗口靠 `MainWindow.closeEvent` 统一清理所有页面的 worker（否则 PyInstaller 退出弹 "Failed to remove temporary directory"）
 - **后端** `backend/`：
   - `cai_backend.py`（CaiBackend 类，核心）：入库/删除/清单/密钥/Steam 路径
-  - `gbe_backend.py`（Goldberg 模拟器）、`trainer_backend.py`（修改器下载）
+  - `gbe_backend.py`（Goldberg 模拟器）、`trainer_backend.py`（修改器下载）、`pan_search_backend.py`（全网搜下载）
 - **数据文件**：`config/config.json`（配置，含 `Custom_Steam_Path`、`force_unlocker_type`、`pan_search_default`）、`config/installed_games.json`（已入库记录，运行时生成）、`config/name_cache.json`（游戏名称缓存，gitignore）、`manifest_records.json`（清单跟踪，运行时生成，项目根目录且未 gitignore）
 
 ## 关键机制
@@ -37,19 +41,32 @@ python build_exe.py
 ### 解锁器（unlocker_type）
 `CaiBackend.initialize()` 自动检测：`opensteamtools`（有 `OpenSteamTool.dll`/`opensteamtool.toml`）→ `steamtools`（`config/stplug-in/`）→ `greenluma`（`GreenLuma_2026_*.dll`），可被 `force_unlocker_type` 覆盖。**这是全项目最核心的分支逻辑。**
 
-各类型文件位置与操作路径：
-
 | 类型 | 解锁文件位置 | 主页 source_type |
 |---|---|---|
 | steamtools | `<Steam>\config\stplug-in\{appid}.lua` + `steamtools.lua` 索引 | `'st'` |
 | opensteamtools | `<Steam>\config\lua\{appid}.lua`（无索引文件） | `'ost'` |
 | greenluma | `<Steam>\AppList\{appid}.txt` | `'gl'` |
 
+### 游戏名称（主页显示 AppID 与搜索命中的根因）
+- 扫描出来的条目 `game_name` 一律为空，靠 `config/name_cache.json` 缓存（键 `f"{appid}_{lang}"`）填充；缓存没有则主页显示 `AppID x` 占位（fluent_app.py `display_games`）
+- 后台补名：`HomePage._load_missing_names` → `backend.fetch_game_info_batch` → `fetch_missing_game_names` → `_fetch_game_name_for_manager`。**v1.8 起：必须传合并数据 `{'all': [g for _, g in self.all_games_data]}`（含 installed_games.json 合并进来的条目），三级 API 全走 `_get_fallback()`（直连→系统代理双通道），失败记录冷却 600s**。失败不写持久缓存（否则 `get_managed_files` 永久填充占位）
+- `installed_games.json` 记录里的 `name` 可回填：`_update_card_info` 只填空名/占位记录，绝不覆盖非空名；`_add_installed_record` 经 `_sanitize_record_name` 清洗（占位名不写入、不降级已有真实名）
+- 占位判断统一用 `_is_placeholder_name()`（空 / 'AppID x' / '名称未找到' 等失败串）
+
+### 搜索（SearchPage）
+- 数字输入走 `_search_appid`（**先 `_match_installed_records` 本地精确命中直接返回**，再在线 `get_game_info_by_appid`）；名称走 `_search_games`（本地记录匹配优先 + `find_appid_by_name` 在线结果按 appid 去重合并）
+- `find_appid_by_name`（cai_backend.py）：本地硬编码 `_HOT_GAME_INDEX`（31 条）→ CaiGames API → Steam storesearch → Steam HTML 搜索，全程不读 installed_games.json（本地匹配在 fluent_app 前端层做）
+- 结果结构统一 `{'appid': str, 'name': str, 'header_image': str}`
+
 ### 删除游戏（delete_game）
-`HomePage.delete_game` → `CaiBackend.delete_managed_files(file_type, items)`。`file_type` 必须是 `st`/`gl`/`ost` 之一，否则返回失败。删除动作：改 steamtools.lua（st 和 ost 都改）、删解锁文件、按 lua 内 `setManifestid` gid 删 depotcache manifest、清备份、清 manifest_records 记录。**注意**：主页 ost 游戏必须标记为 `'ost'` 类型（fluent_app.py `on_games_loaded`），标记错成 `'st'` 会导致删错目录但返回成功。隐患仍在：`on_games_loaded` 的记录回退路径（磁盘解锁文件缺失、靠 installed_games.json 补全时）会把所有非 GL 记录标成 `'st'`，OST 游戏经此路径仍可能被标错。
+`HomePage.delete_game` → `CaiBackend.delete_managed_files(file_type, items)`。`file_type` 必须是 `st`/`gl`/`ost` 之一。**v1.8.2 起确认框双选项**：取消按钮 = 只删解锁，确认按钮 = 删除游戏本体（`uninstall_game_files` 删游戏目录 + appmanifest + shadercache，读 `libraryfolders.vdf` 扫全部库路径）。删除动作：改 steamtools.lua（st 和 ost 都改）、删解锁文件、按 lua 内 `setManifestid` gid 删 depotcache manifest、清备份、清 manifest_records 记录。**删除是幂等的**（文件已不存在视为删除成功，不报 Errno 2）。
 
 ### 入库（unlock）
-`SearchPage._unlock` → `process_zip_source` / `process_github_manifest` → 写解锁文件 + manifest 到 depotcache + `_mirror_lua_to_ost`（仅 OST 模式同步到 config/lua）+ 可选 `complete_manifest_files` → `_add_installed_record` 写记录。GreenLuma 会 `depotkey_merge` 密钥进 `config.vdf` 并全量重写 AppList。
+`SearchPage._unlock` → `process_zip_source` / `process_github_manifest` → 写解锁文件 + manifest 到 depotcache + `_mirror_lua_to_ost`（仅 OST 模式同步到 config/lua）+ 可选 `complete_manifest_files` → `_add_installed_record` 写记录（name 经 `_sanitize_record_name`，传 None/占位不写空名）。GreenLuma 会 `depotkey_merge` 密钥进 `config.vdf` 并全量重写 AppList。
+
+### 更新检查与下载（v1.8.3 修复）
+- `check_for_updates()` 从 GitHub API 拿最新 release；**release_body 显示前必须 `_clean_markdown()`**（Qt 弹窗不渲染 markdown，粗体等会乱码）
+- `_get_mirror_download_url` 拼下载链接时必须**补回 `v` 前缀**（API 返回的 tag 剥了 v，但 GitHub tag 是 `v1.8.2` 格式，漏了会 404 并弹 gh-proxy 错误页）
 
 ### 初始化 OpenSteamTool（主页按钮）
 `HomePage.on_init_ost_clicked` → `CaiBackend.install_opensteamtool`：检测 `opensteamtool.toml` 存在则跳过；否则从 GitHub release 下载 Release.zip 解压到 Steam 根目录 + 写 `[manifest] url = "wurm"`。Steam 路径查找顺序：config 的 `Custom_Steam_Path` → 注册表 → 桌面快捷方式（PowerShell 解析）→ UI 弹窗。
@@ -64,8 +81,8 @@ SearchPage 集成：**「搜下载站」复选框 `pan_search_check`（默认勾
 ## 其他要点
 
 - **翻译**：`fluent_app.py` 里 `TEXTS` 字典 + `_NEW_FEATURE_TEXTS`（新键放这里，其他语言自动回退中文），`tr(key, *args)` 取词
-- **版本号**：`backend/cai_backend.py` 顶部 `CURRENT_VERSION`
 - **镜像加速**：`checkcn()` 检测中国大陆 → 用 gh-proxy 镜像（`check_for_updates`/`download_ost_zip` 模式）
-- **测试**：`tests/test_core.py` 用 `sys.modules` 注入 mock Qt 模块跑无 GUI 逻辑；`tests/test_core.py` 中 `_make_fake_module`/`_AnyCls` 可复用（如脚本里 `import tests.test_core as tc` 后即可导入后端模块）
-- 仓库无 `.cursorrules`/Copilot 规则；README（中英文）未提全网搜和 GBE，描述已滞后于 v1.7
+- **测试**：`tests/test_core.py` 用 `sys.modules` 注入 mock Qt 模块跑无 GUI 逻辑；`_make_fake_module`/`_AnyCls` 可复用（如脚本里 `import tests.test_core as tc` 后即可导入后端模块）；新逻辑（如 `_is_placeholder_name`/`_match_installed_records`/`_sanitize_record_name`）要有对应用例
+- 仓库无 `.cursorrules`/Copilot 规则；README（中英文）由 v1.8 重写，含三步入库教程（初始化→搜索入库→Steam 开玩）
 - **打包注意**：`build_exe.py`/`AuroraInstall.spec` 含已不存在的 hidden-import/数据目录引用（`backend.authorizer_backend`、`backend.cw_extractor_core`、`backend/GBE_Patch`、`backend/GreenLuma_2026_1.7.4-Steam006`），打包异常先查此处；`Resource.json`（顶层的资源站数据）目前无代码引用
+- **GitHub 直连不稳定**：fetch/push 失败先走 `-c http.proxy=http://127.0.0.1:7890`；`gh release` 上传偶发 EOF 需重试

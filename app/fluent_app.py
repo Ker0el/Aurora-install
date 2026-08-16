@@ -1940,6 +1940,10 @@ _NEW_FEATURE_TEXTS = {
         "delete_with_game": "删除游戏本体",
         "delete_with_game_hint": "同时卸载 Steam 游戏（删除游戏目录与清单），请先关闭 Steam",
         "delete_confirm_message": "确定要删除 AppID {0} 吗？\n\n① 只删解锁：移除解锁文件与记录，游戏本体保留\n② 删除游戏本体：同时卸载 Steam 游戏目录与清单\n\n此操作不可撤销。",
+        "current_kernel": "当前内核",
+        "total_games_count": "共 {0} 个游戏",
+        "unlocker_conflict": "冲突（需在设置指定）",
+        "unlocker_none": "未检测到",
     },
     "en_US": {
         "already_installed": "AppID {0} already in library ({1}), skipped",
@@ -2033,6 +2037,10 @@ _NEW_FEATURE_TEXTS = {
         "delete_with_game": "Uninstall Game",
         "delete_with_game_hint": "Also uninstall the Steam game (remove game directory & manifest), close Steam first",
         "delete_confirm_message": "Delete AppID {0}?\n\n① Unlock Only: remove unlock files & records, keep the game\n② Uninstall Game: also remove the game directory & manifest\n\nThis cannot be undone.",
+        "current_kernel": "Current Kernel",
+        "total_games_count": "{0} games total",
+        "unlocker_conflict": "Conflict (specify in Settings)",
+        "unlocker_none": "Not detected",
     },
 }
 for _lang, _keys in _NEW_FEATURE_TEXTS.items():
@@ -2325,6 +2333,7 @@ class GameCard(CardWidget):
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
         self._cover_fallback = False  # 是否已回退到备用 CDN
+        self._cover_scraped = False  # 是否已爬过商店页（防循环）
 
         # 创建布局
         self.hBoxLayout = QHBoxLayout(self)
@@ -2417,19 +2426,38 @@ class GameCard(CardWidget):
         self.repaint()
     
     def load_cover(self):
-        """加载游戏封面"""
+        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+
+    def _load_cover_from_store_page(self):
+        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
+        page_url = f"https://store.steampowered.com/app/{self.appid}/"
+        request = QNetworkRequest(QUrl(page_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
 
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
         ok = False
+        url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
+            # 商店页 HTML：提取 hash 封面 URL 再加载
+            if url_str.startswith("https://store.steampowered.com/app/"):
+                html = bytes(data).decode('utf-8', errors='ignore')
+                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
+                if m:
+                    request = QNetworkRequest(QUrl(m.group(1)))
+                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
+                    self.network_manager.get(request)
+                reply.deleteLater()
+                return
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
@@ -2438,6 +2466,10 @@ class GameCard(CardWidget):
             # 主 CDN 失败，回退备用 CDN 重试一次
             self._cover_fallback = True
             self.load_cover()
+        elif not ok and self._cover_fallback and not self._cover_scraped:
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            self._cover_scraped = True
+            self._load_cover_from_store_page()
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -2560,6 +2592,7 @@ class GameCardGrid(CardWidget):
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self.on_cover_loaded)
         self._cover_fallback = False  # 是否已回退到备用 CDN
+        self._cover_scraped = False  # 是否已爬过商店页（防循环）
 
         # 创建垂直布局
         self.vBoxLayout = QVBoxLayout(self)
@@ -2655,19 +2688,38 @@ class GameCardGrid(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
     
     def load_cover(self):
-        """加载游戏封面"""
+        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+
+    def _load_cover_from_store_page(self):
+        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
+        page_url = f"https://store.steampowered.com/app/{self.appid}/"
+        request = QNetworkRequest(QUrl(page_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
 
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
         ok = False
+        url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
+            # 商店页 HTML：提取 hash 封面 URL 再加载
+            if url_str.startswith("https://store.steampowered.com/app/"):
+                html = bytes(data).decode('utf-8', errors='ignore')
+                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
+                if m:
+                    request = QNetworkRequest(QUrl(m.group(1)))
+                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
+                    self.network_manager.get(request)
+                reply.deleteLater()
+                return
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
@@ -2676,6 +2728,10 @@ class GameCardGrid(CardWidget):
             # 主 CDN 失败，回退备用 CDN 重试一次
             self._cover_fallback = True
             self.load_cover()
+        elif not ok and self._cover_fallback and not self._cover_scraped:
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            self._cover_scraped = True
+            self._load_cover_from_store_page()
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -3354,9 +3410,9 @@ class HomePage(ScrollArea):
         """加载游戏列表（两阶段：先快速显示文件列表，再后台加载游戏名称）"""
         async def _load():
             async with CaiBackend() as backend:
-                await backend.initialize()
+                unlocker_type = await backend.initialize()
                 files_data = await backend.get_managed_files(get_steam_lang(current_language))
-                return files_data
+                return {'files_data': files_data, 'unlocker_type': unlocker_type}
 
         _replace_worker(getattr(self, 'worker', None))
         self.worker = AsyncWorker(_load())
@@ -3785,22 +3841,37 @@ class HomePage(ScrollArea):
 
     
     @pyqtSlot(object)
-    def on_games_loaded(self, files_data):
+    def on_games_loaded(self, result):
         """游戏加载完成"""
         try:
+            # 兼容 dict（含 unlocker_type）或旧结构
+            if isinstance(result, dict):
+                files_data = result.get('files_data') or {}
+                self.current_unlocker = result.get('unlocker_type', '')
+            else:
+                files_data = result
+                self.current_unlocker = getattr(self, 'current_unlocker', '')
             # 清空现有卡片（先从布局移除再销毁）
             for card in self.game_cards:
                 self.card_layout.removeWidget(card)
                 card.deleteLater()
             self.game_cards.clear()
-            
+
             # 统计游戏数量
             st_games = files_data.get('st', [])
             gl_games = files_data.get('gl', [])
             ost_games = files_data.get('ost', [])
             total = len(st_games) + len(gl_games) + len(ost_games)
 
-            self.stats_label.setText(tr("total_games", total, len(st_games), len(ost_games) + len(gl_games)))
+            unlocker_name = {
+                'steamtools': 'SteamTools',
+                'opensteamtools': 'OpenSteamTools',
+                'greenluma': 'GreenLuma',
+                'conflict': tr('unlocker_conflict'),
+                'none': tr('unlocker_none'),
+            }.get(self.current_unlocker, self.current_unlocker or '-')
+            self.stats_label.setText(
+                f"{tr('current_kernel')}: {unlocker_name} ｜ {tr('total_games_count', total)}")
 
             # 创建游戏数据列表
             self.all_games_data = []
@@ -4457,19 +4528,38 @@ class SearchResultCard(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
 
     def load_cover(self):
-        """加载游戏封面"""
+        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+
+    def _load_cover_from_store_page(self):
+        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
+        page_url = f"https://store.steampowered.com/app/{self.appid}/"
+        request = QNetworkRequest(QUrl(page_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
 
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
         ok = False
+        url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
+            # 商店页 HTML：提取 hash 封面 URL 再加载
+            if url_str.startswith("https://store.steampowered.com/app/"):
+                html = bytes(data).decode('utf-8', errors='ignore')
+                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
+                if m:
+                    request = QNetworkRequest(QUrl(m.group(1)))
+                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
+                    self.network_manager.get(request)
+                reply.deleteLater()
+                return
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
@@ -4478,6 +4568,10 @@ class SearchResultCard(CardWidget):
             # 主 CDN 失败，回退备用 CDN 重试一次
             self._cover_fallback = True
             self.load_cover()
+        elif not ok and self._cover_fallback and not self._cover_scraped:
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            self._cover_scraped = True
+            self._load_cover_from_store_page()
         reply.deleteLater()
 
     def on_select_clicked(self):
@@ -4662,19 +4756,38 @@ class SearchResultCardGrid(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
     
     def load_cover(self):
-        """加载游戏封面"""
+        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+
+    def _load_cover_from_store_page(self):
+        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
+        page_url = f"https://store.steampowered.com/app/{self.appid}/"
+        request = QNetworkRequest(QUrl(page_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
 
     @pyqtSlot(QNetworkReply)
     def on_cover_loaded(self, reply):
         """封面加载完成"""
         ok = False
+        url_str = str(reply.url().toString())
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
+            # 商店页 HTML：提取 hash 封面 URL 再加载
+            if url_str.startswith("https://store.steampowered.com/app/"):
+                html = bytes(data).decode('utf-8', errors='ignore')
+                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
+                if m:
+                    request = QNetworkRequest(QUrl(m.group(1)))
+                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
+                    self.network_manager.get(request)
+                reply.deleteLater()
+                return
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
                 self.coverLabel.setPixmap(pixmap)
@@ -4683,6 +4796,10 @@ class SearchResultCardGrid(CardWidget):
             # 主 CDN 失败，回退备用 CDN 重试一次
             self._cover_fallback = True
             self.load_cover()
+        elif not ok and self._cover_fallback and not self._cover_scraped:
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）
+            self._cover_scraped = True
+            self._load_cover_from_store_page()
         reply.deleteLater()
     
     def on_select_clicked(self):
