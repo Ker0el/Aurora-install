@@ -1016,48 +1016,62 @@ class CaiBackend:
 
         return file_data
 
+    async def _fetch_name_steamcmd(self, appid: str, lang: str = "schinese") -> str | None:
+        """补名主力：steamcmd.net 代理优先单发（用户环境唯一稳定通道）。命中写缓存，返回名字或 None"""
+        cache_key = f"{appid}_{lang}"
+        if cache_key in self.name_cache:
+            return self.name_cache[cache_key]
+        try:
+            r = await self._get_fallback_proxy_first(
+                f"https://api.steamcmd.net/v1/info/{appid}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                timeout=8
+            )
+            if r is not None:
+                info = (r.json().get("data", {}) or {}).get(str(appid), {})
+                game_name = info.get("common", {}).get("name", "")
+                if game_name:
+                    self.name_cache[cache_key] = game_name
+                    return game_name
+        except Exception:
+            pass
+        return None
+
     async def fetch_missing_game_names(self, file_data: Dict, lang: str = "schinese") -> Dict:
-        """对 file_data 中名称缺失的条目批量请求 Steam API，返回 {appid: name} 映射。"""
+        """对 file_data 中名称缺失的条目并发请求 steamcmd.net（代理优先），返回 {appid: name} 映射。"""
         missing = set()
         now = time.time()
         for category in file_data:
             for item in file_data[category]:
                 cache_key = f"{item['appid']}_{lang}"
                 if cache_key not in self.name_cache and item['appid'].isdigit():
-                    # 跳过冷却期（600秒）内失败过的 appid，避免网络故障时反复打 API
+                    # 跳过冷却期（120秒）内失败过的 appid，避免网络故障时反复打 API
                     last_fail = self._name_fetch_failures.get(item['appid'], 0)
-                    if now - last_fail < 600:
+                    if now - last_fail < 120:
                         continue
                     missing.add(item['appid'])
 
         if not missing:
             return {}
 
-        # 批量获取：每 20 个一组走 appdetails 批量接口，失败组内单发兜底
-        missing_list = sorted(missing)
-        groups = [missing_list[i:i + 20] for i in range(0, len(missing_list), 20)]
-
-        async def _fetch_group(group):
-            batch = await self._fetch_names_batch(group, lang)
-            # 批量失败的 appid 单发兜底（steamcmd 代理优先，用户环境最稳）
-            for appid in group:
-                if appid not in batch:
-                    name = await self._fetch_game_name_for_manager(appid, lang)
-                    if name and not name.startswith("AppID"):
-                        batch[appid] = name
-            return batch
-
-        group_tasks = [asyncio.ensure_future(_fetch_group(g)) for g in groups]
-        # 最多等 10 秒，返回已完成部分；未完成的取消（下次刷新再补）
-        done, pending = await asyncio.wait(group_tasks, timeout=10)
+        # 全部并发 steamcmd（每个 2-3s，100 个同时跑，首批 6s 内返回）
+        task_map = {asyncio.ensure_future(self._fetch_name_steamcmd(appid, lang)): appid for appid in missing}
+        done, pending = await asyncio.wait(task_map.keys(), timeout=6)
         name_map = {}
         for task in done:
+            appid = task_map[task]
             try:
-                name_map.update(task.result())
+                name = task.result()
+                if name:
+                    name_map[appid] = name
             except Exception:
                 pass
         for task in pending:
             task.cancel()
+        # 未命中的标记冷却（下次刷新不重复打）
+        for appid in missing:
+            if appid not in name_map:
+                self._name_fetch_failures[appid] = time.time()
         _save_global_name_cache()
         return name_map
 

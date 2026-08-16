@@ -2202,13 +2202,17 @@ def _fetch_cover_data(appid):
 
 
 def _fetch_cover_data_worker(appid, callback):
-    """在后台线程下载封面，完成后回调（避免阻塞 GUI）"""
+    """在后台线程下载封面，完成后用 QTimer 切回 GUI 线程回调（避免阻塞 GUI，线程安全）"""
     import threading
 
     def _run():
-        data = _fetch_cover_data(appid)
+        try:
+            data = _fetch_cover_data(appid)
+        except Exception:
+            data = None
         if data:
-            callback(appid, data)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: callback(appid, data))
     threading.Thread(target=_run, daemon=True).start()
 
 
@@ -2563,28 +2567,18 @@ class GameCard(CardWidget):
                 parent.delete_game(self.appid, self.source_type)
 
     def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
-        from PyQt6.QtCore import QMetaObject, Qt
+        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
         try:
             from PyQt6 import sip
-            if sip.isdeleted(self):
+            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
                 return
         except Exception:
             pass
         if str(appid) != str(self.appid):
             return
-
-        def _apply():
-            try:
-                from PyQt6 import sip
-                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                    return
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    self.coverLabel.setPixmap(pixmap)
-            except Exception:
-                pass
-        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            self.coverLabel.setPixmap(pixmap)
     
     def update_mode_label(self, is_fixed):
         """更新版本模式标签"""
@@ -2865,28 +2859,18 @@ class GameCardGrid(CardWidget):
                 parent.delete_game(self.appid, self.source_type)
 
     def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
-        from PyQt6.QtCore import QMetaObject, Qt
+        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
         try:
             from PyQt6 import sip
-            if sip.isdeleted(self):
+            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
                 return
         except Exception:
             pass
         if str(appid) != str(self.appid):
             return
-
-        def _apply():
-            try:
-                from PyQt6 import sip
-                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                    return
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    self.coverLabel.setPixmap(pixmap)
-            except Exception:
-                pass
-        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            self.coverLabel.setPixmap(pixmap)
 
     def on_toggle_clicked(self):
         """版本切换按钮点击"""
@@ -4759,28 +4743,18 @@ class SearchResultCard(CardWidget):
                 parent.unlock_game_direct(self.appid, self.game_name)
 
     def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
-        from PyQt6.QtCore import QMetaObject, Qt
+        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
         try:
             from PyQt6 import sip
-            if sip.isdeleted(self):
+            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
                 return
         except Exception:
             pass
         if str(appid) != str(self.appid):
             return
-
-        def _apply():
-            try:
-                from PyQt6 import sip
-                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                    return
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    self.coverLabel.setPixmap(pixmap)
-            except Exception:
-                pass
-        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            self.coverLabel.setPixmap(pixmap)
 
     def copy_cover(self):
         """复制封面URL到剪贴板"""
@@ -5027,28 +5001,18 @@ class SearchResultCardGrid(CardWidget):
                 parent.unlock_game_direct(self.appid, self.game_name)
 
     def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（跨线程回调，用 QMetaObject 安全切回 GUI 线程）"""
-        from PyQt6.QtCore import QMetaObject, Qt
+        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
         try:
             from PyQt6 import sip
-            if sip.isdeleted(self):
+            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
                 return
         except Exception:
             pass
         if str(appid) != str(self.appid):
             return
-
-        def _apply():
-            try:
-                from PyQt6 import sip
-                if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                    return
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    self.coverLabel.setPixmap(pixmap)
-            except Exception:
-                pass
-        QMetaObject.invokeMethod(self, _apply, Qt.ConnectionType.QueuedConnection)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            self.coverLabel.setPixmap(pixmap)
 
     def copy_cover(self):
         """复制封面URL到剪贴板"""
