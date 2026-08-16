@@ -2490,13 +2490,17 @@ class GameCard(CardWidget):
         self.repaint()
     
     def load_cover(self):
-        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
+        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
+        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
+        if not getattr(self, '_cover_httpx_started', False):
+            self._cover_httpx_started = True
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -2788,13 +2792,17 @@ class GameCardGrid(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
     
     def load_cover(self):
-        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
+        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
+        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
+        if not getattr(self, '_cover_httpx_started', False):
+            self._cover_httpx_started = True
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -4679,13 +4687,17 @@ class SearchResultCard(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
 
     def load_cover(self):
-        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
+        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
+        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
+        if not getattr(self, '_cover_httpx_started', False):
+            self._cover_httpx_started = True
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -4943,13 +4955,17 @@ class SearchResultCardGrid(CardWidget):
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
     
     def load_cover(self):
-        """加载游戏封面（老格式 URL，404 时回退商店页爬取）"""
+        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
         # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
         cdn = "akamai" if self._cover_fallback else "cloudflare"
         cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
         request = QNetworkRequest(QUrl(cover_url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         self.network_manager.get(request)
+        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
+        if not getattr(self, '_cover_httpx_started', False):
+            self._cover_httpx_started = True
+            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""

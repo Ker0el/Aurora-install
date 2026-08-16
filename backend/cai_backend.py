@@ -188,11 +188,35 @@ class CaiBackend:
         self._name_fetch_failures: Dict[str, float] = {}  # appid -> 失败时间戳（冷却期内不重试）
 
     async def __aenter__(self):
-        # 双 client：直连（trust_env=False）+ 代理（trust_env=True）
-        # 用户环境（Clash 等）对 Steam API 分流不稳定，直连失败时走系统代理重试
+        # 双 client：直连（trust_env=False）+ 系统代理（显式读注册表，trust_env 只读环境变量在用户机器是空的）
         self.client = httpx.AsyncClient(verify=True, trust_env=False)
-        self.proxy_client = httpx.AsyncClient(verify=True, trust_env=True)
+        proxy_url = self._get_system_proxy_url()
+        self.proxy_client = httpx.AsyncClient(verify=True, trust_env=False,
+                                              proxy=proxy_url) if proxy_url else self.client
         return self
+
+    def _get_system_proxy_url(self) -> str | None:
+        """从 Windows 注册表读系统代理（Clash 类），返回 http://host:port 或 None"""
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r'Software\Microsoft\Windows\CurrentVersion\Internet Settings')
+            enable, _ = winreg.QueryValueEx(key, 'ProxyEnable')
+            server, _ = winreg.QueryValueEx(key, 'ProxyServer')
+            winreg.CloseKey(key)
+            if enable and server:
+                if '://' not in server:
+                    server = 'http://' + server
+                return server
+        except Exception:
+            pass
+        # 环境变量兜底
+        import os
+        for k in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'):
+            v = os.environ.get(k)
+            if v:
+                return v
+        return None
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.client:
