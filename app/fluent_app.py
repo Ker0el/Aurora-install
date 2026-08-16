@@ -12,7 +12,13 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread, pyqtSlot, QUrl, QLocale
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtGui import QIcon, QPixmap, QFont, QDesktopServices
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply, QNetworkProxy
+
+# Qt 网络默认不走系统代理（大陆访问 Steam CDN 直连被墙），统一启用系统代理
+try:
+    QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.ProxyType.DefaultProxy))
+except Exception:
+    pass
 from qfluentwidgets import (
     FluentIcon, NavigationItemPosition, MessageBox,
     setTheme, Theme, setThemeColor, isDarkTheme,
@@ -8979,7 +8985,7 @@ class SettingsPage(ScrollArea):
         from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QWidget
         from PyQt6.QtCore import Qt, QUrl
         from PyQt6.QtGui import QPixmap
-        from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+        from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply, QNetworkProxy
 
         # 收款码数据：(section_title, wechat_url, alipay_url)
         sections = [

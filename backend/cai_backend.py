@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Tuple, Any, List, Dict, Literal
 from urllib.parse import quote
 
-CURRENT_VERSION = "1.8.4"  # 当前版本号
+CURRENT_VERSION = "1.8.5"  # 当前版本号
 GITHUB_REPO = "Ker0el/Aurora-install"
 # --- LOGGING SETUP ---
 LOG_FORMAT = '%(log_color)s%(message)s'
@@ -201,14 +201,22 @@ class CaiBackend:
             await self.proxy_client.aclose()
 
     async def _get_fallback(self, url: str, headers: dict = None, timeout: float = 10) -> httpx.Response | None:
-        """直连优先，失败自动走系统代理重试，均失败返回 None。"""
-        for cli in (self.client, self.proxy_client):
-            try:
-                r = await cli.get(url, headers=headers, timeout=timeout)
-                if r.status_code == 200:
-                    return r
-            except Exception:
-                continue
+        """直连优先（快速超时），失败自动走系统代理重试（完整超时）。"""
+        # 直连：短暂等待，快速失败后切代理
+        try:
+            direct_timeout = min(timeout, 4)
+            r = await self.client.get(url, headers=headers, timeout=direct_timeout)
+            if r.status_code == 200:
+                return r
+        except Exception:
+            pass
+        # 代理：完整超时重试
+        try:
+            r = await self.proxy_client.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                return r
+        except Exception:
+            pass
         return None
 
     def _init_log(self, level=logging.INFO) -> logging.Logger:
@@ -960,11 +968,18 @@ class CaiBackend:
         if not missing:
             return {}
 
-        tasks = [self._fetch_game_name_for_manager(appid, lang) for appid in missing]
-        results = await asyncio.gather(*tasks)
+        task_map = {asyncio.ensure_future(self._fetch_game_name_for_manager(appid, lang)): appid for appid in missing}
+        # 最多等 8 秒，返回已完成部分；未完成的取消（下次刷新再补）
+        done, pending = await asyncio.wait(task_map.keys(), timeout=8)
         name_map = {}
-        for appid, name in zip(missing, results):
-            name_map[appid] = name
+        for task in done:
+            appid = task_map[task]
+            try:
+                name_map[appid] = task.result()
+            except Exception:
+                pass
+        for task in pending:
+            task.cancel()
         _save_global_name_cache()
         return name_map
 

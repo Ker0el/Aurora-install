@@ -77,6 +77,7 @@ _make_fake_module('PyQt6.QtGui', {
 })
 _make_fake_module('PyQt6.QtNetwork', {
     'QNetworkAccessManager': _AnyCls, 'QNetworkRequest': _AnyCls, 'QNetworkReply': _AnyCls,
+    'QNetworkProxy': _AnyCls,
 })
 sys.modules['qfluentwidgets'] = _DynamicModule('qfluentwidgets')
 
