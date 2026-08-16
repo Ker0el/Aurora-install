@@ -2201,18 +2201,27 @@ def _fetch_cover_data(appid):
     return None
 
 
-def _fetch_cover_data_worker(appid, callback):
-    """在后台线程下载封面，完成后用 QTimer 切回 GUI 线程回调（避免阻塞 GUI，线程安全）"""
+def _fetch_cover_data_worker(appid, context, callback):
+    """后台线程下载封面，完成后带 context 的 QTimer.singleShot 切回 GUI 线程回调。
+
+    注意：singleShot 不带 context 时回调在调用线程（无事件循环的普通线程）永远不执行。
+    context 必须是 GUI 线程的 QObject（如卡片本身）。
+    """
     import threading
 
     def _run():
         try:
             data = _fetch_cover_data(appid)
-        except Exception:
-            data = None
-        if data:
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: callback(appid, data))
+            if data:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, context, lambda: callback(appid, data))
+        except Exception as e:
+            # 写日志便于定位（exe 里异常被吞是死穴）
+            try:
+                import logging
+                logging.getLogger('Aurora Install').warning(f"封面下载失败 {appid}: {e}")
+            except Exception:
+                pass
     threading.Thread(target=_run, daemon=True).start()
 
 
@@ -2504,7 +2513,7 @@ class GameCard(CardWidget):
         # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
         if not getattr(self, '_cover_httpx_started', False):
             self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -2553,7 +2562,7 @@ class GameCard(CardWidget):
             # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -2796,7 +2805,7 @@ class GameCardGrid(CardWidget):
         # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
         if not getattr(self, '_cover_httpx_started', False):
             self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -2845,7 +2854,7 @@ class GameCardGrid(CardWidget):
             # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_delete_clicked(self):
@@ -4681,7 +4690,7 @@ class SearchResultCard(CardWidget):
         # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
         if not getattr(self, '_cover_httpx_started', False):
             self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -4730,7 +4739,7 @@ class SearchResultCard(CardWidget):
             # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
         reply.deleteLater()
 
     def on_select_clicked(self):
@@ -4939,7 +4948,7 @@ class SearchResultCardGrid(CardWidget):
         # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
         if not getattr(self, '_cover_httpx_started', False):
             self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
 
     def _load_cover_from_store_page(self):
         """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
@@ -4988,7 +4997,7 @@ class SearchResultCardGrid(CardWidget):
             # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
             self._cover_scraped = True
             self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self._on_cover_data_ready)
+            _fetch_cover_data_worker(self.appid, self, self._on_cover_data_ready)
         reply.deleteLater()
     
     def on_select_clicked(self):
