@@ -2398,9 +2398,103 @@ class SafeFlowLayout(FlowLayout):
             return item
         return None
 
-class GameCard(CardWidget):
-    """游戏卡片组件"""
+class CoverCard(CardWidget):
+    """封面卡片基类：统一 4 种卡片的封面加载/回退/后台下载逻辑。
+
+    子类契约：构造末尾调用 self.load_cover()；提供 self.appid 和 self.coverLabel。
+    """
     cover_ready = pyqtSignal(object, object)  # (appid, bytes) 封面后台下载完成
+
+    def _init_cover(self):
+        """初始化封面网络与状态（子类构造中调用，需先有 appid/coverLabel）"""
+        self.cover_ready.connect(self._on_cover_data_ready)
+        self.network_manager = QNetworkAccessManager(self)
+        self.network_manager.finished.connect(self.on_cover_loaded)
+        self._cover_fallback = False  # 是否已回退到备用 CDN
+        self._cover_scraped = False  # 是否已爬过商店页（防循环）
+        self._cover_httpx_started = False
+
+    def load_cover(self):
+        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
+        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
+        cdn = "akamai" if self._cover_fallback else "cloudflare"
+        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
+        request = QNetworkRequest(QUrl(cover_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
+        if not self._cover_httpx_started:
+            self._cover_httpx_started = True
+            _fetch_cover_data_worker(self.appid, self)
+
+    def _load_cover_from_store_page(self):
+        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
+        page_url = f"https://store.steampowered.com/app/{self.appid}/"
+        request = QNetworkRequest(QUrl(page_url))
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        self.network_manager.get(request)
+
+    @pyqtSlot(QNetworkReply)
+    def on_cover_loaded(self, reply):
+        """封面加载完成"""
+        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(reply):
+                try:
+                    reply.deleteLater()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+        ok = False
+        url_str = str(reply.url().toString())
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            data = reply.readAll()
+            # 商店页 HTML：提取 hash 封面 URL 再加载
+            if url_str.startswith("https://store.steampowered.com/app/"):
+                import re as _re
+                html = bytes(data).decode('utf-8', errors='ignore')
+                m = _re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
+                if m:
+                    request = QNetworkRequest(QUrl(m.group(1)))
+                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
+                    self.network_manager.get(request)
+                reply.deleteLater()
+                return
+            pixmap = QPixmap()
+            if pixmap.loadFromData(data):
+                self.coverLabel.setPixmap(pixmap)
+                ok = True
+        if not ok and not self._cover_fallback:
+            # 主 CDN 失败，回退备用 CDN 重试一次
+            self._cover_fallback = True
+            self.load_cover()
+        elif not ok and self._cover_fallback and not self._cover_scraped:
+            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
+            self._cover_scraped = True
+            self._load_cover_from_store_page()
+            _fetch_cover_data_worker(self.appid, self)
+        reply.deleteLater()
+
+    def _on_cover_data_ready(self, appid, data):
+        """httpx 后台线程下载封面完成（信号已排队到 GUI 线程）"""
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
+                return
+        except Exception:
+            pass
+        if str(appid) != str(self.appid):
+            return
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            self.coverLabel.setPixmap(pixmap)
+
+
+class GameCard(CoverCard):
+    """游戏卡片组件"""
 
     def __init__(self, appid, game_name, source_type, parent=None, mode="auto", source=""):
         super().__init__(parent)
@@ -2408,13 +2502,6 @@ class GameCard(CardWidget):
         self.game_name = game_name
         self.source_type = source_type  # 'st' 或 'gl'
         self.mode = mode  # 'auto' 或 'fixed'
-        self.cover_ready.connect(self._on_cover_data_ready)
-        
-        # 网络管理器（先初始化）
-        self.network_manager = QNetworkAccessManager(self)
-        self.network_manager.finished.connect(self.on_cover_loaded)
-        self._cover_fallback = False  # 是否已回退到备用 CDN
-        self._cover_scraped = False  # 是否已爬过商店页（防循环）
 
         # 创建布局
         self.hBoxLayout = QHBoxLayout(self)
@@ -2491,84 +2578,23 @@ class GameCard(CardWidget):
         if self.toggleButton:
             self.hBoxLayout.addWidget(self.toggleButton, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addWidget(self.moreButton, 0, Qt.AlignmentFlag.AlignRight)
-        
+
+        # 初始化封面网络与状态
+        self._init_cover()
         # 加载封面（最后执行）
         self.load_cover()
-    
+
     def theme_changed(self):
         """主题变化时更新样式"""
         if isDarkTheme():
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #2a2a2a;")
         else:
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
-        
+
         # 强制刷新卡片
         self.update()
         self.repaint()
-    
-    def load_cover(self):
-        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
-        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
-        cdn = "akamai" if self._cover_fallback else "cloudflare"
-        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
-        request = QNetworkRequest(QUrl(cover_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
-        if not getattr(self, '_cover_httpx_started', False):
-            self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self)
 
-    def _load_cover_from_store_page(self):
-        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
-        page_url = f"https://store.steampowered.com/app/{self.appid}/"
-        request = QNetworkRequest(QUrl(page_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-
-    @pyqtSlot(QNetworkReply)
-    def on_cover_loaded(self, reply):
-        """封面加载完成"""
-        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(reply):
-                try:
-                    reply.deleteLater()
-                except Exception:
-                    pass
-                return
-        except Exception:
-            pass
-        ok = False
-        url_str = str(reply.url().toString())
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = reply.readAll()
-            # 商店页 HTML：提取 hash 封面 URL 再加载
-            if url_str.startswith("https://store.steampowered.com/app/"):
-                html = bytes(data).decode('utf-8', errors='ignore')
-                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
-                if m:
-                    request = QNetworkRequest(QUrl(m.group(1)))
-                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
-                    self.network_manager.get(request)
-                reply.deleteLater()
-                return
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                self.coverLabel.setPixmap(pixmap)
-                ok = True
-        if not ok and not self._cover_fallback:
-            # 主 CDN 失败，回退备用 CDN 重试一次
-            self._cover_fallback = True
-            self.load_cover()
-        elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
-            self._cover_scraped = True
-            self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self)
-        reply.deleteLater()
-    
     def on_delete_clicked(self):
         """删除按钮点击"""
         # 发送信号给父页面
@@ -2579,20 +2605,6 @@ class GameCard(CardWidget):
             if parent:
                 parent.delete_game(self.appid, self.source_type)
 
-    def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                return
-        except Exception:
-            pass
-        if str(appid) != str(self.appid):
-            return
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
-            self.coverLabel.setPixmap(pixmap)
-    
     def update_mode_label(self, is_fixed):
         """更新版本模式标签"""
         if self.modeLabel:
@@ -2689,9 +2701,8 @@ class GameCard(CardWidget):
         menu.exec(self.moreButton.mapToGlobal(self.moreButton.rect().bottomLeft()))
 
 
-class GameCardGrid(CardWidget):
+class GameCardGrid(CoverCard):
     """游戏卡片组件 - 网格视图模式"""
-    cover_ready = pyqtSignal(object, object)  # (appid, bytes) 封面后台下载完成
 
     def __init__(self, appid, game_name, source_type, parent=None, mode="auto", source=""):
         super().__init__(parent)
@@ -2699,13 +2710,6 @@ class GameCardGrid(CardWidget):
         self.game_name = game_name
         self.source_type = source_type  # 'st' 或 'gl'
         self.mode = mode  # 'auto' 或 'fixed'
-        self.cover_ready.connect(self._on_cover_data_ready)
-        
-        # 网络管理器（先初始化）
-        self.network_manager = QNetworkAccessManager(self)
-        self.network_manager.finished.connect(self.on_cover_loaded)
-        self._cover_fallback = False  # 是否已回退到备用 CDN
-        self._cover_scraped = False  # 是否已爬过商店页（防循环）
 
         # 创建垂直布局
         self.vBoxLayout = QVBoxLayout(self)
@@ -2790,79 +2794,18 @@ class GameCardGrid(CardWidget):
         self.vBoxLayout.addLayout(btnLayout)
         self.vBoxLayout.addSpacing(5)
         
+        # 初始化封面网络与状态
+        self._init_cover()
         # 加载封面（最后执行）
         self.load_cover()
-    
+
     def theme_changed(self):
         """主题变化时更新样式"""
         if isDarkTheme():
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #2a2a2a;")
         else:
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
-    
-    def load_cover(self):
-        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
-        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
-        cdn = "akamai" if self._cover_fallback else "cloudflare"
-        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
-        request = QNetworkRequest(QUrl(cover_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
-        if not getattr(self, '_cover_httpx_started', False):
-            self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self)
 
-    def _load_cover_from_store_page(self):
-        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
-        page_url = f"https://store.steampowered.com/app/{self.appid}/"
-        request = QNetworkRequest(QUrl(page_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-
-    @pyqtSlot(QNetworkReply)
-    def on_cover_loaded(self, reply):
-        """封面加载完成"""
-        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(reply):
-                try:
-                    reply.deleteLater()
-                except Exception:
-                    pass
-                return
-        except Exception:
-            pass
-        ok = False
-        url_str = str(reply.url().toString())
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = reply.readAll()
-            # 商店页 HTML：提取 hash 封面 URL 再加载
-            if url_str.startswith("https://store.steampowered.com/app/"):
-                html = bytes(data).decode('utf-8', errors='ignore')
-                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
-                if m:
-                    request = QNetworkRequest(QUrl(m.group(1)))
-                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
-                    self.network_manager.get(request)
-                reply.deleteLater()
-                return
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                self.coverLabel.setPixmap(pixmap)
-                ok = True
-        if not ok and not self._cover_fallback:
-            # 主 CDN 失败，回退备用 CDN 重试一次
-            self._cover_fallback = True
-            self.load_cover()
-        elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
-            self._cover_scraped = True
-            self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self)
-        reply.deleteLater()
-    
     def on_delete_clicked(self):
         """删除按钮点击"""
         # 发送信号给父页面
@@ -2872,20 +2815,6 @@ class GameCardGrid(CardWidget):
                 parent = parent.parent()
             if parent:
                 parent.delete_game(self.appid, self.source_type)
-
-    def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                return
-        except Exception:
-            pass
-        if str(appid) != str(self.appid):
-            return
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
-            self.coverLabel.setPixmap(pixmap)
 
     def on_toggle_clicked(self):
         """版本切换按钮点击"""
@@ -4604,20 +4533,13 @@ class HomePage(ScrollArea):
         self.stats_label.setText(tr("load_failed", error))
 
 
-class SearchResultCard(CardWidget):
+class SearchResultCard(CoverCard):
     """搜索结果卡片组件"""
-    cover_ready = pyqtSignal(object, object)  # (appid, bytes) 封面后台下载完成
 
     def __init__(self, appid, game_name, parent=None):
         super().__init__(parent)
         self.appid = appid
         self.game_name = game_name
-        self.cover_ready.connect(self._on_cover_data_ready)
-        
-        # 网络管理器
-        self.network_manager = QNetworkAccessManager(self)
-        self.network_manager.finished.connect(self.on_cover_loaded)
-        self._cover_fallback = False  # 是否已回退到备用 CDN
 
         # 创建布局
         self.hBoxLayout = QHBoxLayout(self)
@@ -4677,6 +4599,8 @@ class SearchResultCard(CardWidget):
         self.hBoxLayout.addWidget(self.selectButton, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addWidget(self.moreButton, 0, Qt.AlignmentFlag.AlignRight)
 
+        # 初始化封面网络与状态
+        self._init_cover()
         # 加载封面
         self.load_cover()
 
@@ -4687,69 +4611,6 @@ class SearchResultCard(CardWidget):
         else:
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
 
-    def load_cover(self):
-        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
-        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
-        cdn = "akamai" if self._cover_fallback else "cloudflare"
-        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
-        request = QNetworkRequest(QUrl(cover_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
-        if not getattr(self, '_cover_httpx_started', False):
-            self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self)
-
-    def _load_cover_from_store_page(self):
-        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
-        page_url = f"https://store.steampowered.com/app/{self.appid}/"
-        request = QNetworkRequest(QUrl(page_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-
-    @pyqtSlot(QNetworkReply)
-    def on_cover_loaded(self, reply):
-        """封面加载完成"""
-        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(reply):
-                try:
-                    reply.deleteLater()
-                except Exception:
-                    pass
-                return
-        except Exception:
-            pass
-        ok = False
-        url_str = str(reply.url().toString())
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = reply.readAll()
-            # 商店页 HTML：提取 hash 封面 URL 再加载
-            if url_str.startswith("https://store.steampowered.com/app/"):
-                html = bytes(data).decode('utf-8', errors='ignore')
-                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
-                if m:
-                    request = QNetworkRequest(QUrl(m.group(1)))
-                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
-                    self.network_manager.get(request)
-                reply.deleteLater()
-                return
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                self.coverLabel.setPixmap(pixmap)
-                ok = True
-        if not ok and not self._cover_fallback:
-            # 主 CDN 失败，回退备用 CDN 重试一次
-            self._cover_fallback = True
-            self.load_cover()
-        elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
-            self._cover_scraped = True
-            self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self)
-        reply.deleteLater()
-
     def on_select_clicked(self):
         """入库按钮点击 - 直接入库"""
         if self.parent():
@@ -4758,20 +4619,6 @@ class SearchResultCard(CardWidget):
                 parent = parent.parent()
             if parent:
                 parent.unlock_game_direct(self.appid, self.game_name)
-
-    def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                return
-        except Exception:
-            pass
-        if str(appid) != str(self.appid):
-            return
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
-            self.coverLabel.setPixmap(pixmap)
 
     def copy_cover(self):
         """复制封面URL到剪贴板"""
@@ -4857,20 +4704,13 @@ class SearchResultCard(CardWidget):
         parent.start_pan_search(self.appid, self.game_name)
 
 
-class SearchResultCardGrid(CardWidget):
+class SearchResultCardGrid(CoverCard):
     """搜索结果卡片组件 - 网格视图模式"""
-    cover_ready = pyqtSignal(object, object)  # (appid, bytes) 封面后台下载完成
 
     def __init__(self, appid, game_name, parent=None):
         super().__init__(parent)
         self.appid = appid
         self.game_name = game_name
-        self.cover_ready.connect(self._on_cover_data_ready)
-        
-        # 网络管理器
-        self.network_manager = QNetworkAccessManager(self)
-        self.network_manager.finished.connect(self.on_cover_loaded)
-        self._cover_fallback = False  # 是否已回退到备用 CDN
 
         # 创建垂直布局
         self.vBoxLayout = QVBoxLayout(self)
@@ -4937,79 +4777,18 @@ class SearchResultCardGrid(CardWidget):
         self.vBoxLayout.addLayout(btn_row)
         self.vBoxLayout.addSpacing(5)
         
+        # 初始化封面网络与状态
+        self._init_cover()
         # 加载封面
         self.load_cover()
-    
+
     def theme_changed(self):
         """主题变化时更新样式"""
         if isDarkTheme():
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #1a1a1a;")
         else:
             self.coverLabel.setStyleSheet("border-radius: 4px; background: #f0f0f0;")
-    
-    def load_cover(self):
-        """加载游戏封面：Qt 老格式 CDN 直连 + 并行启动 httpx hash 链路（谁先成功用谁）"""
-        # Steam 封面 URL（cloudflare 主源，加载失败后回退 akamai）
-        cdn = "akamai" if self._cover_fallback else "cloudflare"
-        cover_url = f"https://cdn.{cdn}.steamstatic.com/steam/apps/{self.appid}/header.jpg"
-        request = QNetworkRequest(QUrl(cover_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-        # 并行启动 httpx hash 链路（新游戏老格式必 404，不等 Qt 失败直接跑）
-        if not getattr(self, '_cover_httpx_started', False):
-            self._cover_httpx_started = True
-            _fetch_cover_data_worker(self.appid, self)
 
-    def _load_cover_from_store_page(self):
-        """老格式 URL 404（新游戏 hash 封面）：爬商店页提取 game_header_image_full 真实封面"""
-        page_url = f"https://store.steampowered.com/app/{self.appid}/"
-        request = QNetworkRequest(QUrl(page_url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        self.network_manager.get(request)
-
-    @pyqtSlot(QNetworkReply)
-    def on_cover_loaded(self, reply):
-        """封面加载完成"""
-        # 防闪退：卡片可能已被删除/刷新，访问已销毁的 C++ 对象会导致 Qt 致命崩溃
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(reply):
-                try:
-                    reply.deleteLater()
-                except Exception:
-                    pass
-                return
-        except Exception:
-            pass
-        ok = False
-        url_str = str(reply.url().toString())
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = reply.readAll()
-            # 商店页 HTML：提取 hash 封面 URL 再加载
-            if url_str.startswith("https://store.steampowered.com/app/"):
-                html = bytes(data).decode('utf-8', errors='ignore')
-                m = re.search(r'class="game_header_image_full"[^>]*src="([^"]+)"', html)
-                if m:
-                    request = QNetworkRequest(QUrl(m.group(1)))
-                    request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0")
-                    self.network_manager.get(request)
-                reply.deleteLater()
-                return
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                self.coverLabel.setPixmap(pixmap)
-                ok = True
-        if not ok and not self._cover_fallback:
-            # 主 CDN 失败，回退备用 CDN 重试一次
-            self._cover_fallback = True
-            self.load_cover()
-        elif not ok and self._cover_fallback and not self._cover_scraped:
-            # 两个 CDN 都失败 → 爬商店页拿 hash 封面（只爬一次，防循环）+ httpx 后台线程兜底
-            self._cover_scraped = True
-            self._load_cover_from_store_page()
-            _fetch_cover_data_worker(self.appid, self)
-        reply.deleteLater()
-    
     def on_select_clicked(self):
         """选择按钮点击"""
         if self.parent():
@@ -5018,20 +4797,6 @@ class SearchResultCardGrid(CardWidget):
                 parent = parent.parent()
             if parent:
                 parent.unlock_game_direct(self.appid, self.game_name)
-
-    def _on_cover_data_ready(self, appid, data):
-        """httpx 后台线程下载封面完成（QTimer 已切回 GUI 线程）"""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self) or sip.isdeleted(self.coverLabel):
-                return
-        except Exception:
-            pass
-        if str(appid) != str(self.appid):
-            return
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
-            self.coverLabel.setPixmap(pixmap)
 
     def copy_cover(self):
         """复制封面URL到剪贴板"""
@@ -7325,11 +7090,13 @@ class LauncherLogWorker(QThread):
 
 class LauncherPage(ScrollArea):
     """联机游戏页面 - 支持 DLL 注入 / BAT 脚本两种方式"""
+    _log_signal = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("launcherPage")
         self.setWidgetResizable(True)
+        self._log_signal.connect(self._log)
 
         self._service: Optional[SystemCoreService] = None
         self._log_worker: Optional[LauncherLogWorker] = None
@@ -7484,6 +7251,10 @@ class LauncherPage(ScrollArea):
         sb = self.log_view.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _thread_safe_log(self, msg: str):
+        """供工作线程调用：通过信号转发到 GUI 线程更新日志（线程安全）"""
+        self._log_signal.emit(msg)
+
     def _clear_log(self):
         self._log_lines.clear()
         self.log_view.clear()
@@ -7566,7 +7337,7 @@ class LauncherPage(ScrollArea):
         except Exception:
             pass
 
-        self._service = SystemCoreService(self._log, steam_path)
+        self._service = SystemCoreService(self._thread_safe_log, steam_path)
         self._set_running(True)
         self._log(f"-> 启动 DLL 注入联机 | AppID: {app_id}")
 
